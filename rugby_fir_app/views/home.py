@@ -2213,9 +2213,23 @@ def _build_pitch_bundle_for_pdf(hist_df: pd.DataFrame, match_info: dict, meta: d
                     r0_ov = mr.iloc[0]
                     if pd.notna(r0_ov.get("Min")):
                         m_oval = float(pd.to_numeric(r0_ov.get("Min"), errors="coerce") or 0.0)
+                    # Metriche Oval Match richieste: CIC, TCK, RCK
                     cic_v = pd.to_numeric(r0_ov.get("TotalCarriesInContact"), errors="coerce")
-                    tck_v = pd.to_numeric(r0_ov.get("TotalTackleAttempts"), errors="coerce")
-                    rck_v = pd.to_numeric(r0_ov.get("TotalEffectiveRuckEntries"), errors="coerce")
+                    if pd.isna(cic_v):
+                        cic_v = pd.to_numeric(r0_ov.get("totalCarriesInContact"), errors="coerce")
+
+                    tck_v = pd.to_numeric(r0_ov.get("TackleComplete"), errors="coerce")
+                    if pd.isna(tck_v):
+                        tck_v = pd.to_numeric(r0_ov.get("tackleComplete"), errors="coerce")
+                    if pd.isna(tck_v):
+                        tck_v = pd.to_numeric(r0_ov.get("TotalTackleAttempts"), errors="coerce")
+
+                    rck_v = pd.to_numeric(r0_ov.get("TotalRuckEntries"), errors="coerce")
+                    if pd.isna(rck_v):
+                        rck_v = pd.to_numeric(r0_ov.get("totalRuckEntries"), errors="coerce")
+                    if pd.isna(rck_v):
+                        rck_v = pd.to_numeric(r0_ov.get("TotalEffectiveRuckEntries"), errors="coerce")
+
                     cic_val = float(cic_v) if pd.notna(cic_v) else 0.0
                     tck_val = float(tck_v) if pd.notna(tck_v) else 0.0
                     rck_val = float(rck_v) if pd.notna(rck_v) else 0.0
@@ -2276,9 +2290,9 @@ def _build_pitch_bundle_for_pdf(hist_df: pd.DataFrame, match_info: dict, meta: d
                 "VHml": tot_vhml / divisor,
                 "HSR": tot_hsr / divisor,
                 "PoS": max_pos,
-                "CIC": tot_cic / divisor,
-                "TCK": tot_tck / divisor,
-                "RCK": tot_rck / divisor,
+                "CIC": tot_cic,   # SOMMA REPARTO (anziché media) come da richiesta utente
+                "TCK": tot_tck,   # SOMMA REPARTO (anziché media) come da richiesta utente
+                "RCK": tot_rck,   # SOMMA REPARTO (anziché media) come da richiesta utente
                 "minutes": tot_min / divisor,
             }
 
@@ -2963,9 +2977,23 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
                 r0_ov = m_row.iloc[0]
                 if pd.notna(r0_ov.get("Min")):
                     m_oval = float(pd.to_numeric(r0_ov.get("Min"), errors="coerce") or 0.0)
+                # Metriche Oval Match richieste: CIC, TCK, RCK
                 cic_v = pd.to_numeric(r0_ov.get("TotalCarriesInContact"), errors="coerce")
-                tck_v = pd.to_numeric(r0_ov.get("TotalTackleAttempts"), errors="coerce")
-                rck_v = pd.to_numeric(r0_ov.get("TotalEffectiveRuckEntries"), errors="coerce")
+                if pd.isna(cic_v):
+                    cic_v = pd.to_numeric(r0_ov.get("totalCarriesInContact"), errors="coerce")
+
+                tck_v = pd.to_numeric(r0_ov.get("TackleComplete"), errors="coerce")
+                if pd.isna(tck_v):
+                    tck_v = pd.to_numeric(r0_ov.get("tackleComplete"), errors="coerce")
+                if pd.isna(tck_v):
+                    tck_v = pd.to_numeric(r0_ov.get("TotalTackleAttempts"), errors="coerce")
+
+                rck_v = pd.to_numeric(r0_ov.get("TotalRuckEntries"), errors="coerce")
+                if pd.isna(rck_v):
+                    rck_v = pd.to_numeric(r0_ov.get("totalRuckEntries"), errors="coerce")
+                if pd.isna(rck_v):
+                    rck_v = pd.to_numeric(r0_ov.get("TotalEffectiveRuckEntries"), errors="coerce")
+
                 cic_val = float(cic_v) if pd.notna(cic_v) else 0.0
                 tck_val = float(tck_v) if pd.notna(tck_v) else 0.0
                 rck_val = float(rck_v) if pd.notna(rck_v) else 0.0
@@ -3041,9 +3069,9 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
             "Hml": tot_hml / divisor,
             "VHml": tot_vhml / divisor,
             "HSR": tot_hsr / divisor,
-            "CIC": tot_cic / divisor,
-            "TCK": tot_tck / divisor,
-            "RCK": tot_rck / divisor,
+            "CIC": tot_cic,   # SOMMA REPARTO (anziché media) come da richiesta utente
+            "TCK": tot_tck,   # SOMMA REPARTO (anziché media) come da richiesta utente
+            "RCK": tot_rck,   # SOMMA REPARTO (anziché media) come da richiesta utente
             "PoS": max_pos,
             "minutes": tot_min / divisor,
             "count": len(p_names_dept),
@@ -3161,19 +3189,19 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         tck_val = st_data.get("TCK", 0.0)
         rck_val = st_data.get("RCK", 0.0)
 
-        # Foto giocatore (ottimizzata e nitida per il tabellone)
-        photo_b64 = utils.get_player_photo_base64(p_name, max_width=120)
+        # Foto giocatore a tutta altezza sulla sinistra
+        photo_b64 = utils.get_player_photo_base64(p_name, max_width=160)
         if photo_b64:
-            photo_html = f'<img src="data:image/jpeg;base64,{photo_b64}" style="width:28px; height:32px; object-fit:cover; border-radius:4px; border:1px solid #CBD5E1; flex-shrink:0; box-shadow:0 1px 3px rgba(0,0,0,0.15);" alt="{p_name}">'
+            photo_html = f'<img src="data:image/jpeg;base64,{photo_b64}" style="width:100%; height:100%; object-fit:cover; object-position:top center; display:block;" alt="{p_name}">'
         else:
             inits = "".join(part[0] for part in p_name.split()[:2]).upper()
-            photo_html = f'<div style="width:28px; height:32px; border-radius:4px; background:#E2E8F0; display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:800; color:#002B49; flex-shrink:0;">{inits}</div>'
+            photo_html = f'<div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:#E2E8F0; font-size:15px; font-weight:900; color:#002B49;">{inits}</div>'
 
-        border_css = f"border: 2.8px solid {border_col}; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.22);"
+        border_css = f"border: 2.2px solid {border_col}; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.20);"
 
         short_name = _format_player_name(p_name)
         n_len = len(short_name)
-        font_sz = "8.6px" if n_len > 14 else ("9.2px" if n_len > 10 else "9.8px")
+        font_sz = "9.5px" if n_len > 14 else ("10.5px" if n_len > 10 else "11.5px")
 
         pos_str = f"{pos_val:.1f}" if pos_val > 0 else "0"
         dt_str = f"{int(dt_val):,}".replace(",", ".") if dt_val > 0 else "0"
@@ -3186,34 +3214,43 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         rck_str = f"{int(round(rck_val))}" if rck_val > 0 else "0"
 
         return f"""
-        <div style="background:#FFFFFF; border-radius:9px; {border_css} padding:5px 7px; width:174px; font-family:'Inter', sans-serif; box-sizing:border-box;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; border-bottom:1px solid #E2E8F0; padding-bottom:4px; margin-bottom:4px;">
-                <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1;">
-                    <div style="width:20px; height:20px; min-width:20px; border-radius:50%; background:{border_col}; border:1.5px solid #FFFFFF; box-shadow:0 1px 2px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center; color:#FFFFFF; font-weight:900; font-size:10px; flex-shrink:0;">
-                        {j_num}
+        <div style="background:#FFFFFF; border-radius:10px; {border_css} width:206px; height:106px; display:flex; overflow:hidden; font-family:'Inter', -apple-system, BlinkMacSystemFont, sans-serif; box-sizing:border-box;">
+            <!-- FOTO GIOCATORE SINISTRA A TUTTA ALTEZZA -->
+            <div style="width:72px; min-width:72px; height:100%; background:#F8FAFC; border-right:1px solid #E2E8F0; overflow:hidden; display:flex; align-items:center; justify-content:center; position:relative; flex-shrink:0;">
+                {photo_html}
+            </div>
+            <!-- COLONNA DATI DESTRA -->
+            <div style="flex:1; min-width:0; padding:4px 7px 3px 7px; display:flex; flex-direction:column; justify-content:space-between; height:100%; box-sizing:border-box;">
+                <!-- HEADER: BADGE MAGLIA + NOME + MINUTI -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:3px; border-bottom:1px solid #E2E8F0; padding-bottom:2px;">
+                    <div style="display:flex; align-items:center; gap:4px; min-width:0; flex:1;">
+                        <div style="width:20px; height:20px; min-width:20px; border-radius:50%; background:{border_col}; display:flex; align-items:center; justify-content:center; color:#FFFFFF; font-weight:900; font-size:10.5px; flex-shrink:0;">
+                            {j_num}
+                        </div>
+                        <div style="font-size:{font_sz}; font-weight:800; color:#0F172A; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;" title="{p_name}">
+                            {short_name}
+                        </div>
                     </div>
-                    {photo_html}
-                    <div style="font-size:{font_sz}; font-weight:800; color:#0F172A; white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0; flex:1;" title="{p_name}">
-                        {short_name}
+                    <div style="text-align:right; line-height:0.95; flex-shrink:0;">
+                        <div style="font-size:6.5px; color:#64748B; font-weight:700; text-transform:uppercase;">min</div>
+                        <div style="font-size:11px; font-weight:900; color:#0284C7;">{int(round(minuti_val))}</div>
                     </div>
                 </div>
-                <div style="text-align:right; line-height:1.0; flex-shrink:0; padding-left:2px;">
-                    <div style="font-size:6.5px; color:#64748B; font-weight:700; text-transform:uppercase;">min</div>
-                    <div style="font-size:10.5px; font-weight:900; color:#0284C7;">{int(round(minuti_val))}</div>
+                <!-- GRIGLIA METRICHE GPS (2 COLONNE X 3 RIGHE) -->
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:1px 5px; font-size:8.8px; line-height:1.22; padding:1px 0;">
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">PoS</span><b style="color:#0F172A; font-size:9.2px;">{pos_str}</b></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">DT</span><b style="color:#0F172A; font-size:9.2px;">{dt_str}</b></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">DC</span><b style="color:#0F172A; font-size:9.2px;">{dc_str}</b></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">Hml</span><b style="color:#0F172A; font-size:9.2px;">{hml_str}</b></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">VHml</span><b style="color:#0F172A; font-size:9.2px;">{vhml_str}</b></div>
+                    <div style="display:flex; justify-content:space-between; align-items:baseline;"><span style="color:#64748B; font-size:7.5px;">HSR</span><b style="color:#0F172A; font-size:9.2px;">{hsr_str}</b></div>
                 </div>
-            </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5px 5px; font-size:8.8px;">
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">PoS</span><b style="color:#0F172A;">{pos_str}</b></div>
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">DT</span><b style="color:#0F172A;">{dt_str}</b></div>
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">DC</span><b style="color:#0F172A;">{dc_str}</b></div>
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">Hml</span><b style="color:#0F172A;">{hml_str}</b></div>
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">VHml</span><b style="color:#0F172A;">{vhml_str}</b></div>
-                <div style="display:flex; justify-content:space-between;"><span style="color:#64748B; font-size:8.0px;">HSR</span><b style="color:#0F172A;">{hsr_str}</b></div>
-            </div>
-            <div style="margin-top:3px; padding:2px 4px; border-top:1px dashed #CBD5E1; background:#F8FAFC; border-radius:4px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:3px; font-size:8.2px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;" title="TotalCarriesInContact (Col. BP)"><span style="color:#64748B; font-size:7.3px; font-weight:700;">CIC</span><b style="color:#0369A1;">{cic_str}</b></div>
-                <div style="display:flex; justify-content:space-between; align-items:center;" title="TotalTackleAttempts (Col. BD)"><span style="color:#64748B; font-size:7.3px; font-weight:700;">TCK</span><b style="color:#B91C1C;">{tck_str}</b></div>
-                <div style="display:flex; justify-content:space-between; align-items:center;" title="TotalEffectiveRuckEntries (Col. CG)"><span style="color:#64748B; font-size:7.3px; font-weight:700;">RCK</span><b style="color:#047857;">{rck_str}</b></div>
+                <!-- RIGA INFERIORE DATI OVAL: CIC | TCK | RCK -->
+                <div style="border-top:1px dashed #CBD5E1; padding-top:2px; display:flex; justify-content:space-between; align-items:center; font-size:8px;">
+                    <div title="TotalCarriesInContact (Oval)"><span style="color:#64748B; font-weight:700; font-size:7.5px;">CIC</span> <b style="color:#0369A1; font-size:9.5px;">{cic_str}</b></div>
+                    <div title="TackleComplete (Oval)"><span style="color:#64748B; font-weight:700; font-size:7.5px;">TCK</span> <b style="color:#B91C1C; font-size:9.5px;">{tck_str}</b></div>
+                    <div title="TotalRuckEntries (Oval)"><span style="color:#64748B; font-weight:700; font-size:7.5px;">RCK</span> <b style="color:#047857; font-size:9.5px;">{rck_str}</b></div>
+                </div>
             </div>
         </div>
         """
@@ -3255,14 +3292,14 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         """
 
     # Finishers (Maglie 16–23 in 2 colonne ben spaziate)
-    fin_col1_html = "".join([f'<div style="margin-bottom:18px;">{_render_player_html_card(num, is_starter=False)}</div>' for num in [16, 17, 18, 19]])
-    fin_col2_html = "".join([f'<div style="margin-bottom:18px;">{_render_player_html_card(num, is_starter=False)}</div>' for num in [20, 21, 22, 23]])
+    fin_col1_html = "".join([f'<div style="margin-bottom:14px;">{_render_player_html_card(num, is_starter=False)}</div>' for num in [16, 17, 18, 19]])
+    fin_col2_html = "".join([f'<div style="margin-bottom:14px;">{_render_player_html_card(num, is_starter=False)}</div>' for num in [20, 21, 22, 23]])
 
-    # Render del tabellone tattico completo (SENZA CERCHIO CENTRALE, campo distanziato 1040px)
+    # Render del tabellone tattico completo (SENZA CERCHIO CENTRALE, campo distanziato 1060px)
     tabellone_html = f"""
     <div style="display:flex; gap:16px; align-items:stretch; margin-bottom:18px;">
         <!-- CAMPO RUGBY (Titolari 1–15) -->
-        <div style="flex:3.2; position:relative; min-height:1040px; border-radius:14px; overflow:hidden;
+        <div style="flex:3.2; position:relative; min-height:1060px; border-radius:14px; overflow:hidden;
                     background: linear-gradient(180deg, #166534 0%, #15803D 50%, #166534 100%);
                     border:3px solid #FFFFFF; box-shadow:0 8px 24px rgba(15,23,42,0.16);">
             
@@ -3287,8 +3324,8 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         </div>
 
         <!-- PANNELLO FINISHERS (Panchina 16–23) -->
-        <div style="flex:1.5; min-width:390px; background:#031926; border:2px solid #D4AF37; border-radius:14px; padding:18px 16px; box-shadow:0 8px 24px rgba(0,0,0,0.35); display:flex; flex-direction:column; justify-content:space-between;">
-            <div style="text-align:center; padding-bottom:8px; border-bottom:1px solid rgba(212,175,55,0.35); margin-bottom:16px;">
+        <div style="flex:1.6; min-width:470px; background:#031926; border:2px solid #D4AF37; border-radius:14px; padding:16px 14px; box-shadow:0 8px 24px rgba(0,0,0,0.35); display:flex; flex-direction:column; justify-content:space-between;">
+            <div style="text-align:center; padding-bottom:8px; border-bottom:1px solid rgba(212,175,55,0.35); margin-bottom:14px;">
                 <div style="font-size:12.5px; font-weight:800; text-transform:uppercase; color:#D4AF37; letter-spacing:0.08em;">
                     FINISHERS (16–23)
                 </div>
@@ -3299,11 +3336,11 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
             
             <div style="display:flex; gap:12px; justify-content:space-between; flex:1; align-items:flex-start;">
                 <div style="flex:1;">
-                    <div style="font-size:8.5px; font-weight:700; color:#D4AF37; text-align:center; margin-bottom:12px; text-transform:uppercase;">Colonna 1</div>
+                    <div style="font-size:8.5px; font-weight:700; color:#D4AF37; text-align:center; margin-bottom:10px; text-transform:uppercase;">Colonna 1</div>
                     {fin_col1_html}
                 </div>
                 <div style="flex:1;">
-                    <div style="font-size:8.5px; font-weight:700; color:#D4AF37; text-align:center; margin-bottom:12px; text-transform:uppercase;">Colonna 2</div>
+                    <div style="font-size:8.5px; font-weight:700; color:#D4AF37; text-align:center; margin-bottom:10px; text-transform:uppercase;">Colonna 2</div>
                     {fin_col2_html}
                 </div>
             </div>
@@ -3329,24 +3366,24 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         hml_f = f"{int(avg_f.get('Hml', 0)):,}".replace(",", ".")
         vhml_f = f"{int(avg_f.get('VHml', 0)):,}".replace(",", ".")
         hsr_f = f"{int(avg_f.get('HSR', 0)):,}".replace(",", ".")
-        cic_f = f"{avg_f.get('CIC', 0):.1f}" if avg_f.get("CIC", 0) > 0 else "0"
-        tck_f = f"{avg_f.get('TCK', 0):.1f}" if avg_f.get("TCK", 0) > 0 else "0"
-        rck_f = f"{avg_f.get('RCK', 0):.1f}" if avg_f.get("RCK", 0) > 0 else "0"
+        cic_f = f"{int(round(avg_f.get('CIC', 0)))}" if avg_f.get("CIC", 0) > 0 else "0"
+        tck_f = f"{int(round(avg_f.get('TCK', 0)))}" if avg_f.get("TCK", 0) > 0 else "0"
+        rck_f = f"{int(round(avg_f.get('RCK', 0)))}" if avg_f.get("RCK", 0) > 0 else "0"
 
         dt_b = f"{int(avg_b.get('DT', 0)):,}".replace(",", ".")
         dc_b = f"{int(avg_b.get('DC', 0)):,}".replace(",", ".")
         hml_b = f"{int(avg_b.get('Hml', 0)):,}".replace(",", ".")
         vhml_b = f"{int(avg_b.get('VHml', 0)):,}".replace(",", ".")
         hsr_b = f"{int(avg_b.get('HSR', 0)):,}".replace(",", ".")
-        cic_b = f"{avg_b.get('CIC', 0):.1f}" if avg_b.get("CIC", 0) > 0 else "0"
-        tck_b = f"{avg_b.get('TCK', 0):.1f}" if avg_b.get("TCK", 0) > 0 else "0"
-        rck_b = f"{avg_b.get('RCK', 0):.1f}" if avg_b.get("RCK", 0) > 0 else "0"
+        cic_b = f"{int(round(avg_b.get('CIC', 0)))}" if avg_b.get("CIC", 0) > 0 else "0"
+        tck_b = f"{int(round(avg_b.get('TCK', 0)))}" if avg_b.get("TCK", 0) > 0 else "0"
+        rck_b = f"{int(round(avg_b.get('RCK', 0)))}" if avg_b.get("RCK", 0) > 0 else "0"
 
         medie_html = f"""
         <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:10px; overflow:hidden; box-shadow:0 3px 10px rgba(15,23,42,0.06);">
             <div style="background:#002B49; color:#FFFFFF; padding:8px 14px; font-size:11px; font-weight:800; letter-spacing:0.04em; display:flex; justify-content:space-between; align-items:center;">
-                <span>MEDIE REPARTI &bull; SOMMA AVANTI &divide; 8 &bull; SOMMA TREQUARTI &divide; 7</span>
-                <span style="font-size:9.5px; color:#D4AF37; font-weight:700;">RIASSUNTO MATCH (GPS + OVAL)</span>
+                <span>MEDIE REPARTI (GPS) &bull; SOMME TOTALI (OVAL)</span>
+                <span style="font-size:9.5px; color:#D4AF37; font-weight:700;">RIASSUNTO MATCH</span>
             </div>
             <div style="padding:10px 12px;">
                 <table style="width:100%; border-collapse:collapse; font-size:10.5px; text-align:right;">
@@ -3358,14 +3395,14 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
                             <th style="padding:5px 5px;">Hml (m)</th>
                             <th style="padding:5px 5px;">VHml (m)</th>
                             <th style="padding:5px 5px;">HSR (m)</th>
-                            <th style="padding:5px 5px; color:#0369A1;">CIC</th>
-                            <th style="padding:5px 5px; color:#B91C1C;">TCK</th>
-                            <th style="padding:5px 5px; color:#047857;">RCK</th>
+                            <th style="padding:5px 5px; color:#0369A1;" title="Somma TotalCarriesInContact">CIC (Tot)</th>
+                            <th style="padding:5px 5px; color:#B91C1C;" title="Somma TackleComplete">TCK (Tot)</th>
+                            <th style="padding:5px 5px; color:#047857;" title="Somma TotalRuckEntries">RCK (Tot)</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr style="border-bottom:1px solid #E2E8F0;">
-                            <td style="padding:6px 6px; text-align:left; font-weight:800; color:#002B49;">Avanti <span style="font-size:9px; color:#64748B; font-weight:500;">(Tot. ÷ 8)</span></td>
+                            <td style="padding:6px 6px; text-align:left; font-weight:800; color:#002B49;">Avanti <span style="font-size:9px; color:#64748B; font-weight:500;">(GPS ÷ 8)</span></td>
                             <td style="padding:6px 5px; font-weight:700;">{dt_f}</td>
                             <td style="padding:6px 5px;">{dc_f}</td>
                             <td style="padding:6px 5px; color:#0284C7; font-weight:700;">{hml_f}</td>
@@ -3376,7 +3413,7 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
                             <td style="padding:6px 5px; color:#047857; font-weight:700;">{rck_f}</td>
                         </tr>
                         <tr>
-                            <td style="padding:6px 6px; text-align:left; font-weight:800; color:#002B49;">TreQuarti <span style="font-size:9px; color:#64748B; font-weight:500;">(Tot. ÷ 7)</span></td>
+                            <td style="padding:6px 6px; text-align:left; font-weight:800; color:#002B49;">TreQuarti <span style="font-size:9px; color:#64748B; font-weight:500;">(GPS ÷ 7)</span></td>
                             <td style="padding:6px 5px; font-weight:700;">{dt_b}</td>
                             <td style="padding:6px 5px;">{dc_b}</td>
                             <td style="padding:6px 5px; color:#0284C7; font-weight:700;">{hml_b}</td>
@@ -3389,7 +3426,7 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
                     </tbody>
                 </table>
                 <div style="font-size:9px; color:#64748B; font-style:italic; margin-top:6px;">
-                    * Medie di reparto calcolate sommando i valori effettivi di tutti i giocatori e dividendo per le posizioni in campo (Somma Avanti ÷ 8, Somma TreQuarti ÷ 7).
+                    * Parametri GPS calcolati come media di reparto (Somma Avanti ÷ 8, Somma TreQuarti ÷ 7). Per i parametri Oval (CIC, TCK, RCK) è riportata la <b>Somma Totale</b> per reparto (quantità complessiva di interventi nella gara).
                 </div>
             </div>
         </div>
@@ -3406,12 +3443,13 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
                 <div style="margin-bottom:2px;"><b style="color:#0284C7;">• PoS / DT / DC:</b> Peak of Speed (Vmax km/h) • Distanza Totale (m) • Distanza Corsa &gt;6 km/h (m).</div>
                 <div style="margin-bottom:2px;"><b style="color:#0284C7;">• Hml / VHml:</b> High Metabolic Load &gt;25.5 W/kg (m) • Very High Metabolic Load &gt;50.0 W/kg (m).</div>
                 <div style="margin-bottom:2px;"><b style="color:#0284C7;">• HSR (High Speed Running):</b> Corsa ad alta velocità (&gt;18 km/h Avanti, &gt;20 km/h TreQuarti).</div>
-                <div style="margin-bottom:2px;"><b style="color:#0369A1;">• CIC (TotalCarriesInContact — Col. BP Oval):</b> Carries portati in contatto dall'atleta.</div>
-                <div style="margin-bottom:2px;"><b style="color:#B91C1C;">• TCK (TotalTackleAttempts — Col. BD Oval):</b> Placcaggi totali tentati nel match.</div>
-                <div><b style="color:#047857;">• RCK (TotalEffectiveRuckEntries — Col. CG Oval):</b> Ingressi efficaci in ruck (pulizie/sicurezza).</div>
+                <div style="margin-bottom:2px;"><b style="color:#0369A1;">• CIC (TotalCarriesInContact — Oval):</b> Carries / Avanzamenti con impatto in contatto con avversari.</div>
+                <div style="margin-bottom:2px;"><b style="color:#B91C1C;">• TCK (TackleComplete — Oval):</b> Placcaggi completati con successo nel match.</div>
+                <div><b style="color:#047857;">• RCK (TotalRuckEntries — Oval):</b> Ingressi totali in ruck / punto d'incontro (attacco + difesa).</div>
             </div>
         </div>
         """
+        st.html("".join(line.strip() for line in legenda_html.splitlines() if line.strip()))
         st.html("".join(line.strip() for line in legenda_html.splitlines() if line.strip()))
 
     # Slogan Banner finale FIR

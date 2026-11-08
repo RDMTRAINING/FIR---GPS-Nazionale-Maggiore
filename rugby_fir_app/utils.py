@@ -1836,6 +1836,24 @@ def get_oval_matches_df() -> pd.DataFrame:
 
 def import_oval_csv_dataframe(raw_df: pd.DataFrame, overwrite_existing: bool = False) -> dict:
     df = raw_df.copy()
+    # Pulisce spazi bianchi o caratteri invisibili/tab dalle colonne (es. '\tTackleComplete', ' TotalRuckEntries ')
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Normalizza varianti di intestazione per le metriche chiave Oval Match (CIC, TCK, RCK)
+    for c in list(df.columns):
+        c_clean = c.strip()
+        c_low = c_clean.lower().replace(" ", "").replace("_", "")
+        if c_low == "totalcarriesincontact":
+            df = df.rename(columns={c: "TotalCarriesInContact"})
+        elif c_low in ("tacklecomplete", "tacklescomplete", "completedtackles", "tacklecompleted"):
+            df = df.rename(columns={c: "TackleComplete"})
+        elif c_low in ("totalruckentries", "ruckentries", "totalruckentry"):
+            df = df.rename(columns={c: "TotalRuckEntries"})
+
+    for num_col in ["TotalCarriesInContact", "TackleComplete", "TotalRuckEntries"]:
+        if num_col in df.columns:
+            df[num_col] = pd.to_numeric(df[num_col], errors="coerce").fillna(0)
+
     if "playerId.1" in df.columns:
         df = df.rename(columns={"playerId.1": "playerId_dup"})
 
@@ -2100,6 +2118,78 @@ def delete_oval_match_by_game(match_date: str, game: str, team_name: str = None)
         target_t = str(team_name).strip()
         mask = mask & (t_series == target_t)
 
+    removed_cnt = int(mask.sum())
+    if removed_cnt > 0:
+        remaining = df[~mask].copy().reset_index(drop=True)
+        if not remaining.empty:
+            remaining["id"] = range(1, len(remaining) + 1)
+        save_table("oval_matches", remaining)
+        try:
+            get_oval_matches_df.clear()
+        except Exception:
+            pass
+    return removed_cnt
+
+
+def get_oval_distinct_dates_df() -> pd.DataFrame:
+    """
+    Raggruppa i record di oval_matches per data (match_date / date)
+    restituendo l'elenco delle date distinte presenti in archivio, con numero di partite,
+    squadre coinvolte e totale record per consentire la cancellazione in blocco per data.
+    """
+    df = get_oval_matches_df()
+    if df.empty:
+        return pd.DataFrame(columns=["match_date", "n_matches", "n_records", "games_summary", "teams_summary", "label"])
+
+    work = df.copy()
+    date_col = "date" if "date" in work.columns else "match_date"
+    work["match_date"] = work[date_col].fillna("").astype(str).str[:10].str.strip()
+    work = work[work["match_date"].str.len() == 10].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["match_date", "n_matches", "n_records", "games_summary", "teams_summary", "label"])
+
+    work["game"] = work.get("game", pd.Series([""] * len(work))).fillna("").astype(str).str.strip()
+    work["teamName"] = work.get("teamName", pd.Series([""] * len(work))).fillna("").astype(str).str.strip()
+
+    rows = []
+    for m_date, grp in work.groupby("match_date", dropna=False):
+        games = [g for g in grp["game"].unique().tolist() if g and str(g).lower() not in ("nan", "none", "")]
+        teams = [t for t in grp["teamName"].unique().tolist() if t and str(t).lower() not in ("nan", "none", "")]
+        n_rec = len(grp)
+        n_matches = max(len(games), 1)
+        g_str = ", ".join(games[:3]) + (f" (+{len(games)-3} altre)" if len(games) > 3 else "")
+        t_str = ", ".join(teams[:3]) + (f" (+{len(teams)-3} altre)" if len(teams) > 3 else "")
+        desc = g_str or t_str or "Gare"
+        lbl = f"{m_date} — {n_matches} gare ({n_rec} atleti) • {desc}"
+        rows.append({
+            "match_date": m_date,
+            "n_matches": n_matches,
+            "n_records": n_rec,
+            "games_summary": g_str,
+            "teams_summary": t_str,
+            "label": lbl,
+        })
+    res_df = pd.DataFrame(rows)
+    if not res_df.empty:
+        res_df = res_df.sort_values(by="match_date", ascending=False).reset_index(drop=True)
+    return res_df
+
+
+def delete_oval_matches_by_date(match_date: str) -> int:
+    """
+    Elimina dall'archivio oval_matches TUTTI i record di tutte le partite disputate
+    nella data specificata (YYYY-MM-DD), utile per ripulire un'intera giornata e ricaricarla.
+    Restituisce il numero di record rimossi.
+    """
+    df = load_table("oval_matches")
+    if df.empty:
+        return 0
+
+    date_col = "date" if "date" in df.columns else "match_date"
+    d_series = df[date_col].fillna("").astype(str).replace({"None": "", "nan": "", "NaT": ""}).str[:10].str.strip()
+    target_d = str(match_date or "").strip()[:10]
+
+    mask = (d_series == target_d)
     removed_cnt = int(mask.sum())
     if removed_cnt > 0:
         remaining = df[~mask].copy().reset_index(drop=True)
@@ -3599,6 +3689,8 @@ def get_player_photo_base64(player_name: str, max_width: int = 240, force_refres
     parts = p_norm.split()
     first = parts[0] if len(parts) >= 2 else ""
     last = parts[-1] if parts else ""
+    # Gestione nomi composti o multi-parola (es. Enoch Opoku Gyamfi, Martin Page Relo)
+    surname_parts = parts[1:] if len(parts) >= 2 else parts
 
     candidates = []
     valid_exts = (".jpg", ".png", ".jpeg", ".webp", ".bmp")
@@ -3611,10 +3703,17 @@ def get_player_photo_base64(player_name: str, max_width: int = 240, force_refres
                 full_p = os.path.join(root, f)
                 f_norm = _norm(f)
 
-                # Priorità 1: Sia Cognome che Nome presenti nel nome file
-                if last and last in f_norm and first and first in f_norm:
+                # Priorità 0: Corrispondenza esatta di tutte le parole del nome
+                if len(parts) >= 2 and all(p in f_norm for p in parts if len(p) >= 3):
+                    candidates.append((0, full_p))
+                # Priorità 1: Sia un componente del Cognome che il Nome presenti nel nome file
+                elif first and first in f_norm and any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
                     candidates.append((1, full_p))
-                # Priorità 2: Cognome presente nel file (minimo 4 caratteri, es. Casarin, Miranda, Lamaro)
+                elif last and last in f_norm and first and first in f_norm:
+                    candidates.append((1, full_p))
+                # Priorità 2: Almeno un componente significativo del Cognome presente nel file (minimo 4 caratteri)
+                elif any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
+                    candidates.append((2, full_p))
                 elif last and len(last) >= 4 and last in f_norm:
                     candidates.append((2, full_p))
                 # NOTA: NESSUNA Priorità per il solo nome proprio per evitare che Casarin prenda la foto di Favretto!

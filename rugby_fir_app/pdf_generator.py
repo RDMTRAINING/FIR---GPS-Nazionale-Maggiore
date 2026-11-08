@@ -1112,7 +1112,7 @@ def _build_trombinoscopio_rl_table(pitch_bundle: dict) -> Table:
         [Paragraph(
             "<b>• PoS:</b> Vmax (km/h) &nbsp;|&nbsp; <b>• DT:</b> Dist. Totale (m) &nbsp;|&nbsp; <b>• DC:</b> Corsa &gt;6 km/h (m) &nbsp;|&nbsp; "
             "<b>• Hml:</b> &gt;25.5 W/kg &nbsp;|&nbsp; <b>• VHml:</b> &gt;50 W/kg &nbsp;|&nbsp; <b>• HSR:</b> &gt;18 AV / &gt;20 TQ<br/>"
-            "<b>• CIC (Col. BP):</b> TotalCarriesInContact &nbsp;|&nbsp; <b>• TCK (Col. BD):</b> TotalTackleAttempts &nbsp;|&nbsp; <b>• RCK (Col. CG):</b> TotalEffectiveRuckEntries",
+            "<b>• CIC:</b> TotalCarriesInContact &nbsp;|&nbsp; <b>• TCK:</b> TackleComplete &nbsp;|&nbsp; <b>• RCK:</b> TotalRuckEntries",
             leg_p_st
         )]
     ]
@@ -3902,13 +3902,13 @@ def _draw_schieramento_pitch_on_canvas(
     c.roundRect(b1_x, bot_y + bot_h - 16, b1_w, 16, 4, fill=1, stroke=0)
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 7.0)
-    c.drawString(b1_x + 8, bot_y + bot_h - 11.5, "MEDIE REPARTI (SOMMA AVANTI ÷ 8 • SOMMA TREQUARTI ÷ 7)")
+    c.drawString(b1_x + 8, bot_y + bot_h - 11.5, "MEDIE REPARTI GPS (÷ 8 / 7) • SOMME REPARTI OVAL (TOT)")
 
     avg_fwd = rep_averages.get("Avanti", {})
     avg_bks = rep_averages.get("TreQuarti", {})
 
     col_w_arr = [52, 41, 41, 41, 40, 49, 34, 34, 34]
-    t_headers = ["Reparto", "DT (m)", "DC (m)", "Hml (m)", "VHml", "HSR (m)", "CIC", "TCK", "RCK"]
+    t_headers = ["Reparto", "DT (m)", "DC (m)", "Hml (m)", "VHml", "HSR (m)", "CIC (Tot)", "TCK (Tot)", "RCK (Tot)"]
     t_x = b1_x + 6
 
     # Riga Header Tabella
@@ -3944,13 +3944,13 @@ def _draw_schieramento_pitch_on_canvas(
     cur_tx += col_w_arr[5]
     c.setFont("Helvetica-Bold", 5.6)
     c.setFillColor(colors.HexColor("#0369A1"))
-    c.drawRightString(cur_tx + col_w_arr[6] - 4, rf_y, f"{avg_fwd.get('CIC', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[6] - 4, rf_y, f"{int(round(avg_fwd.get('CIC', 0)))}")
     cur_tx += col_w_arr[6]
     c.setFillColor(colors.HexColor("#B91C1C"))
-    c.drawRightString(cur_tx + col_w_arr[7] - 4, rf_y, f"{avg_fwd.get('TCK', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[7] - 4, rf_y, f"{int(round(avg_fwd.get('TCK', 0)))}")
     cur_tx += col_w_arr[7]
     c.setFillColor(colors.HexColor("#047857"))
-    c.drawRightString(cur_tx + col_w_arr[8] - 4, rf_y, f"{avg_fwd.get('RCK', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[8] - 4, rf_y, f"{int(round(avg_fwd.get('RCK', 0)))}")
 
     # Riga TreQuarti
     rb_y = bot_y + bot_h - 54
@@ -3971,18 +3971,18 @@ def _draw_schieramento_pitch_on_canvas(
     cur_tx += col_w_arr[5]
     c.setFont("Helvetica-Bold", 5.6)
     c.setFillColor(colors.HexColor("#0369A1"))
-    c.drawRightString(cur_tx + col_w_arr[6] - 4, rb_y, f"{avg_bks.get('CIC', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[6] - 4, rb_y, f"{int(round(avg_bks.get('CIC', 0)))}")
     cur_tx += col_w_arr[6]
     c.setFillColor(colors.HexColor("#B91C1C"))
-    c.drawRightString(cur_tx + col_w_arr[7] - 4, rb_y, f"{avg_bks.get('TCK', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[7] - 4, rb_y, f"{int(round(avg_bks.get('TCK', 0)))}")
     cur_tx += col_w_arr[7]
     c.setFillColor(colors.HexColor("#047857"))
-    c.drawRightString(cur_tx + col_w_arr[8] - 4, rb_y, f"{avg_bks.get('RCK', 0):.1f}")
+    c.drawRightString(cur_tx + col_w_arr[8] - 4, rb_y, f"{int(round(avg_bks.get('RCK', 0)))}")
 
     # Nota HSR in calce
     c.setFillColor(colors.HexColor("#64748B"))
     c.setFont("Helvetica-Oblique", 4.8)
-    c.drawString(t_x + 4, bot_y + 4, "* Medie calcolate sommando i dati effettivi di tutti i giocatori (Avanti ÷ 8, TreQuarti ÷ 7).")
+    c.drawString(t_x + 4, bot_y + 4, "* Medie GPS (Avanti ÷ 8, TreQuarti ÷ 7). Per i parametri Oval (CIC, TCK, RCK) è indicata la Somma Totale di reparto.")
 
     # BOX 2: LEGENDA METRICHE GPEXE & OVAL (Destra, larghezza 422 pt)
     b2_x, b2_w = 404, 422
@@ -4001,9 +4001,9 @@ def _draw_schieramento_pitch_on_canvas(
         ("PoS/DT/DC", "Peak of Speed (Vmax km/h) • Distanza Totale (m) • Distanza Corsa >6.0 km/h (m)."),
         ("Hml/VHml", "High Metabolic Load >25.5 W/kg (m) • Very High Metabolic Load >50.0 W/kg (m)."),
         ("HSR", "High Speed Running: Corsa ad alta velocità (>18 km/h Avanti, >20 km/h TreQuarti)."),
-        ("CIC", "TotalCarriesInContact (Col. BP Oval): Carries portati in contatto nel match."),
-        ("TCK", "TotalTackleAttempts (Col. BD Oval): Placcaggi totali tentati nel match."),
-        ("RCK", "TotalEffectiveRuckEntries (Col. CG Oval): Ingressi efficaci in ruck (pulizie/sicurezza)."),
+        ("CIC", "TotalCarriesInContact (Oval): Carries portati in contatto nel match."),
+        ("TCK", "TackleComplete (Oval): Placcaggi completati con successo nel match."),
+        ("RCK", "TotalRuckEntries (Oval): Ingressi totali in ruck / punto d'incontro nel match."),
     ]
 
     leg_start_y = bot_y + bot_h - 26

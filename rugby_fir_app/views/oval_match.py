@@ -329,64 +329,119 @@ def _render_delete_oval_match_expander(key_prefix: str = "oval_del"):
         return
 
     matches_cat = utils.get_oval_distinct_matches_df()
+    dates_cat = utils.get_oval_distinct_dates_df()
     n_matches = len(matches_cat)
-    with st.expander(f"🗑️ Elimina una Partita dai Dati Oval per Ricaricarla ({n_matches} gare in archivio)", expanded=False):
+    n_dates = len(dates_cat)
+
+    with st.expander(f"🗑️ Gestione Eliminazione Partite Oval (per Singolo Match o per Data • {n_matches} gare in archivio)", expanded=False):
         st.caption(
-            "Seleziona una partita dall'elenco per **cancellare in un solo clic tutte le prestazioni giocatori di quel match** dal database Oval. "
-            "Utile quando devi **ricaricare un file Oval aggiornato/corretto** per quella gara."
+            "Cancellazione rapida dei dati Oval per consentire di **ricaricare un file corretto o aggiornato**. "
+            "Puoi eliminare una **singola partita** oppure **tutte le partite di una data/giornata** in un solo clic."
         )
         if matches_cat.empty:
             st.info("Nessuna partita presente nell'archivio Oval.")
             return
 
-        f_c1, f_c2 = st.columns([1.2, 2.8])
-        teams_avail = ["Tutte le Squadre"] + sorted([t for t in matches_cat["teamName"].dropna().unique().tolist() if str(t).strip()])
-        sel_tm_del = f_c1.selectbox("Filtra per Squadra", teams_avail, key=f"{key_prefix}_team_flt")
-
-        sub_cat = matches_cat.copy()
-        if sel_tm_del != "Tutte le Squadre":
-            sub_cat = sub_cat[sub_cat["teamName"] == sel_tm_del].reset_index(drop=True)
-
-        if sub_cat.empty:
-            st.warning("Nessuna partita trovata per la squadra selezionata.")
-            return
-
-        match_labels = sub_cat["label"].tolist()
-        sel_lbl = f_c2.selectbox("Seleziona la Partita da Eliminare", match_labels, key=f"{key_prefix}_match_sel")
-        sel_row = sub_cat[sub_cat["label"] == sel_lbl].iloc[0]
-
-        m_date_val = str(sel_row["match_date"])
-        m_game_val = str(sel_row["game"])
-        m_team_val = str(sel_row["teamName"])
-        m_nrec = int(sel_row["n_records"])
-        m_prev = str(sel_row["players_preview"])
-
-        st.markdown(
-            f"""
-            <div style="background:#FEF2F2; border:1px solid #FECACA; border-left:4px solid #DC2626; border-radius:8px; padding:9px 12px; margin:6px 0 10px 0; font-size:0.80rem; color:#7F1D1D;">
-                <b>Partita selezionata:</b> {m_date_val} • <b>{m_game_val or m_team_val}</b> ({m_team_val}) — <b>{m_nrec} record giocatori</b><br/>
-                <span style="font-size:0.74rem; color:#991B1B;"><b>Atleti coinvolti:</b> {m_prev}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        del_mode = st.radio(
+            "Modalità di eliminazione:",
+            ["🎯 Singola Partita (Match specifico)", "📅 Intera Data (Tutte le partite di quel giorno)"],
+            horizontal=True,
+            key=f"{key_prefix}_mode_radio",
         )
 
-        b_c1, b_c2 = st.columns([1.8, 2.2])
-        confirm_chk = b_c1.checkbox(
-            f"Confermo l'eliminazione dei {m_nrec} record di questa gara",
-            value=False,
-            key=f"{key_prefix}_confirm_chk",
-        )
-        if b_c2.button(
-            f"🗑️ Elimina Partita ({m_nrec} giocatori) dal Database Oval",
-            type="primary",
-            disabled=not confirm_chk,
-            use_container_width=True,
-            key=f"{key_prefix}_btn_exec",
-        ):
-            removed = utils.delete_oval_match_by_game(m_date_val, m_game_val, m_team_val)
-            st.success(f"✅ Eliminata la partita **{m_date_val} • {m_game_val}** ({removed} record rimossi). Ora puoi ricaricare il match!")
-            st.rerun()
+        if "Singola Partita" in del_mode:
+            f_c1, f_c2 = st.columns([1.2, 2.8])
+            teams_avail = ["Tutte le Squadre"] + sorted([t for t in matches_cat["teamName"].dropna().unique().tolist() if str(t).strip()])
+            sel_tm_del = f_c1.selectbox("Filtra per Squadra", teams_avail, key=f"{key_prefix}_team_flt")
+
+            sub_cat = matches_cat.copy()
+            if sel_tm_del != "Tutte le Squadre":
+                sub_cat = sub_cat[sub_cat["teamName"] == sel_tm_del].reset_index(drop=True)
+
+            if sub_cat.empty:
+                st.warning("Nessuna partita trovata per la squadra selezionata.")
+                return
+
+            match_labels = sub_cat["label"].tolist()
+            sel_lbl = f_c2.selectbox("Seleziona la Partita da Eliminare", match_labels, key=f"{key_prefix}_match_sel")
+            sel_row = sub_cat[sub_cat["label"] == sel_lbl].iloc[0]
+
+            m_date_val = str(sel_row["match_date"])
+            m_game_val = str(sel_row["game"])
+            m_team_val = str(sel_row["teamName"])
+            m_nrec = int(sel_row["n_records"])
+            m_prev = str(sel_row["players_preview"])
+
+            st.markdown(
+                f"""
+                <div style="background:#FEF2F2; border:1px solid #FECACA; border-left:4px solid #DC2626; border-radius:8px; padding:9px 12px; margin:6px 0 10px 0; font-size:0.80rem; color:#7F1D1D;">
+                    <b>Partita selezionata:</b> {m_date_val} • <b>{m_game_val or m_team_val}</b> ({m_team_val}) — <b>{m_nrec} record giocatori</b><br/>
+                    <span style="font-size:0.74rem; color:#991B1B;"><b>Atleti coinvolti:</b> {m_prev}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            b_c1, b_c2 = st.columns([1.8, 2.2])
+            confirm_chk = b_c1.checkbox(
+                f"Confermo l'eliminazione dei {m_nrec} record di questa gara",
+                value=False,
+                key=f"{key_prefix}_confirm_chk",
+            )
+            if b_c2.button(
+                f"🗑️ Elimina Partita ({m_nrec} atleti) dal Database",
+                type="primary",
+                disabled=not confirm_chk,
+                use_container_width=True,
+                key=f"{key_prefix}_btn_exec",
+            ):
+                removed = utils.delete_oval_match_by_game(m_date_val, m_game_val, m_team_val)
+                st.success(f"✅ Eliminata la partita **{m_date_val} • {m_game_val}** ({removed} record rimossi). Ora puoi ricaricare il match!")
+                st.rerun()
+
+        else:
+            # Eliminazione per INTERA DATA
+            if dates_cat.empty:
+                st.warning("Nessuna data valida trovata nell'archivio.")
+                return
+
+            d_labels = dates_cat["label"].tolist()
+            sel_date_lbl = st.selectbox("Seleziona la Data / Giornata da Eliminare", d_labels, key=f"{key_prefix}_date_sel")
+            sel_date_row = dates_cat[dates_cat["label"] == sel_date_lbl].iloc[0]
+
+            d_val = str(sel_date_row["match_date"])
+            d_nmatches = int(sel_date_row["n_matches"])
+            d_nrec = int(sel_date_row["n_records"])
+            d_games = str(sel_date_row["games_summary"])
+            d_teams = str(sel_date_row["teams_summary"])
+
+            st.markdown(
+                f"""
+                <div style="background:#FFF1F2; border:1px solid #FDA4AF; border-left:4px solid #E11D48; border-radius:8px; padding:10px 14px; margin:6px 0 10px 0; font-size:0.82rem; color:#881337;">
+                    <b>📅 Data selezionata:</b> <span style="font-size:0.95rem; font-weight:800;">{d_val}</span> — <b>{d_nmatches} partite</b> ({d_nrec} record atleti totali)<br/>
+                    <b>Partite in questa data:</b> {d_games or '-'}<br/>
+                    <b>Squadre:</b> {d_teams or '-'}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            b_d1, b_d2 = st.columns([1.8, 2.2])
+            confirm_date_chk = b_d1.checkbox(
+                f"Confermo l'eliminazione di TUTTE le gare del {d_val} ({d_nrec} record)",
+                value=False,
+                key=f"{key_prefix}_confirm_date_chk",
+            )
+            if b_d2.button(
+                f"🗑️ Elimina Tutte le Partite del {d_val} ({d_nrec} record)",
+                type="primary",
+                disabled=not confirm_date_chk,
+                use_container_width=True,
+                key=f"{key_prefix}_btn_date_exec",
+            ):
+                removed = utils.delete_oval_matches_by_date(d_val)
+                st.success(f"✅ Eliminate con successo tutte le partite del **{d_val}** ({removed} record rimossi dal database Oval)!")
+                st.rerun()
 
 
 def render_oval_match(t: dict):
@@ -1411,6 +1466,7 @@ def _render_tab_upload():
         sep = ";" if first_line.count(";") > first_line.count(",") else ","
         up.seek(0)
         new_df = pd.read_csv(up, sep=sep, encoding="utf-8-sig", low_memory=False)
+        new_df.columns = [str(c).strip() for c in new_df.columns]
         st.info(f"File letto correttamente: **{len(new_df):,} righe** e **{len(new_df.columns)} colonne**.")
         st.dataframe(new_df.head(8), use_container_width=True)
         if st.button("Conferma e Aggiorna Database Oval Match", type="primary", key="btn_oval_up_confirm"):
