@@ -32,13 +32,23 @@ def slugify_name(text: str) -> str:
 
 
 def fig_to_rl_image(fig, width=535, height=210):
-    """Converte un grafico Plotly in un'immagine ad alta risoluzione per ReportLab (come in webapp_tennis_gps)."""
-    try:
-        img_bytes = fig.to_image(format="png", width=int(width * 2.2), height=int(height * 2.2), scale=2)
-        return RLImage(BytesIO(img_bytes), width=width, height=height)
-    except Exception:
+    """Converte un grafico Plotly in un'immagine ad alta risoluzione per ReportLab."""
+    if fig is None:
         styles = getSampleStyleSheet()
-        return Paragraph("<i>[Grafico incluso nella vista interattiva]</i>", styles["Normal"])
+        return Paragraph("<i>[Grafico non disponibile]</i>", styles["Normal"])
+    try:
+        img_bytes = fig.to_image(format="png", width=int(width * 2.0), height=int(height * 2.0), scale=2)
+        return RLImage(BytesIO(img_bytes), width=width, height=height)
+    except Exception as e1:
+        try:
+            # Fallback a scala standard 1
+            img_bytes = fig.to_image(format="png", width=int(width), height=int(height), scale=1)
+            return RLImage(BytesIO(img_bytes), width=width, height=height)
+        except Exception as e2:
+            import logging
+            logging.getLogger("fir_pdf").warning(f"Errore conversione grafico in immagine: {e1} | {e2}")
+            styles = getSampleStyleSheet()
+            return Paragraph("<i>[Grafico incluso nella vista interattiva]</i>", styles["Normal"])
 
 
 def _build_pdf_with_footer(doc, elements, brand="FEDERAZIONE ITALIANA RUGBY • GPS ANALYTICS"):
