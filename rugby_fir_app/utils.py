@@ -2628,11 +2628,24 @@ def _parse_dur_mmss(val) -> float:
             if len(parts) == 2:
                 return round(float(parts[0]) + float(parts[1]) / 60.0, 2)
             elif len(parts) == 3:
-                return round(float(parts[0]) * 60.0 + float(parts[1]) + float(parts[2]) / 60.0, 2)
+                p0 = float(parts[0])
+                p1 = float(parts[1])
+                p2 = float(parts[2])
+                # Se p0 >= 4 oppure il terzo elemento è "00" o "0" (es. "41:42:00" o "34:22:00"),
+                # si tratta del formato GPExe/Excel mm:ss[:00], dove p0 sono i minuti e p1 i secondi.
+                # (Excel converte automaticamente mm:ss in hh:mm:ss aggiungendo :00 in coda).
+                if p0 >= 4.0 or parts[2].strip() in ("00", "0"):
+                    return round(p0 + p1 / 60.0, 2)
+                # Altrimenti, formato standard hh:mm:ss (es. "01:15:30" -> 1h 15m 30s = 75.5 min)
+                return round(p0 * 60.0 + p1 + p2 / 60.0, 2)
         except Exception:
             return np.nan
     try:
-        return round(float(s.replace(",", ".")), 2)
+        f = float(s.replace(",", "."))
+        # Se il numero è > 300 senza ':', si tratta di secondi grezzi (es. 2605 sec = 43.4 min)
+        if f > 300.0:
+            return round(f / 60.0, 2)
+        return round(f, 2)
     except Exception:
         return np.nan
 
@@ -2755,6 +2768,14 @@ def parse_standard_gps_csv(raw_df: pd.DataFrame, fname: str, team_type: str, onl
             z6 = _parse_num_val(r.get(cols_lower.get("distance/speed z6 (m)", "")))
             sp_25_72 = (0.0 if pd.isna(z5) else z5) + (0.0 if pd.isna(z6) else z6) if (pd.notna(z5) or pd.notna(z6)) else np.nan
 
+            day_name = None
+            if dt_str:
+                try:
+                    it_days = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+                    day_name = it_days[pd.to_datetime(dt_str).weekday()]
+                except Exception:
+                    day_name = None
+
             row_dict = {
                 "team_type": team_type,
                 "team_name": team_name_label,
@@ -2764,7 +2785,7 @@ def parse_standard_gps_csv(raw_df: pd.DataFrame, fname: str, team_type: str, onl
                 "sigla": p_sigla,
                 "session_name": sess_name,
                 "date": dt_str,
-                "day_name": None,
+                "day_name": day_name,
                 "role": p_role,
                 "period": period_val,
                 "profile_max_vel": p_vmax_prof if p_vmax_prof else np.nan,
@@ -2852,6 +2873,14 @@ def parse_standard_gps_csv(raw_df: pd.DataFrame, fname: str, team_type: str, onl
             sp_20_25 = round(max(0.0, c20 - c25), 2)
             sp_18_20 = round(max(0.0, c18 - c20), 2)
 
+            day_name = None
+            if dt_str:
+                try:
+                    it_days = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+                    day_name = it_days[pd.to_datetime(dt_str).weekday()]
+                except Exception:
+                    day_name = None
+
             row_dict = {
                 "team_type": team_type,
                 "team_name": team_name_label,
@@ -2861,7 +2890,7 @@ def parse_standard_gps_csv(raw_df: pd.DataFrame, fname: str, team_type: str, onl
                 "sigla": p_sigla,
                 "session_name": sess_name,
                 "date": dt_str,
-                "day_name": None,
+                "day_name": day_name,
                 "role": p_role,
                 "period": period_val,
                 "profile_max_vel": p_vmax_prof if p_vmax_prof else np.nan,
