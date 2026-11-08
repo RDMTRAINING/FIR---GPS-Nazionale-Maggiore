@@ -3,6 +3,7 @@ import re
 import io
 from io import BytesIO
 import base64
+from PIL import Image
 import utils
 import pandas as pd
 import numpy as np
@@ -3624,65 +3625,72 @@ def _draw_schieramento_pitch_on_canvas(
         tck_val = st_data.get("TCK", 0.0)
         rck_val = st_data.get("RCK", 0.0)
 
-        # 1. Sfondo bianco card
+        # 1. Sfondo bianco card con angoli arrotondati
         c.setFillColor(colors.white)
-        c.roundRect(bx, by, bw, bh, 4, fill=1, stroke=0)
+        c.roundRect(bx, by, bw, bh, 3.5, fill=1, stroke=0)
 
-        # 2. Header del box (altezza 16.0 pt)
-        header_h = 16.0
-        header_split_y = by + bh - header_h
-        c.setFillColor(colors.HexColor("#F8FAFC"))
-        c.roundRect(bx + 1.0, header_split_y, bw - 2.0, header_h - 1.0, 3, fill=1, stroke=0)
-        c.setStrokeColor(colors.HexColor("#E2E8F0"))
-        c.setLineWidth(0.45)
-        c.line(bx + 1.0, header_split_y, bx + bw - 1.0, header_split_y)
-
-        # Fascia inferiore Dati Oval (CIC / TCK / RCK)
-        oval_strip_h = 9.2
-        c.setFillColor(colors.HexColor("#F8FAFC"))
-        c.roundRect(bx + 1.2, by + 1.2, bw - 2.4, oval_strip_h, 2.5, fill=1, stroke=0)
-        c.setStrokeColor(colors.HexColor("#CBD5E1"))
-        c.setLineWidth(0.4)
-        c.line(bx + 1.5, by + 1.2 + oval_strip_h, bx + bw - 1.5, by + 1.2 + oval_strip_h)
-
-        # 3. Cornice colorata per ruolo (disegnata sopra il riempimento per avere tutti i 4 lati nitidi)
-        c.setStrokeColor(colors.HexColor(border_hex))
-        c.setLineWidth(2.3)
-        c.roundRect(bx, by, bw, bh, 4, fill=0, stroke=1)
-
-        # Badge circolare numero di maglia
-        badge_cx, badge_cy, badge_r = bx + 9.2, by + bh - 8.2, 6.2
-        c.setFillColor(colors.HexColor(border_hex))
-        c.setStrokeColor(colors.HexColor("#FFFFFF"))
-        c.setLineWidth(0.8)
-        c.circle(badge_cx, badge_cy, badge_r, fill=1, stroke=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 6.4)
-        c.drawCentredString(badge_cx, badge_cy - 2.1, str(j_num))
-
-        # Foto del giocatore
-        photo_b64 = utils.get_player_photo_base64(p_name, max_width=80)
+        # 2. Foto a tutta altezza sulla sinistra (35% della larghezza della card)
+        pw = round(bw * 0.35, 1)
+        photo_b64 = utils.get_player_photo_base64(p_name, max_width=160)
         photo_drawn = False
-        photo_x, photo_y, photo_w, photo_h = bx + 17.5, by + bh - 15.2, 13.5, 14.0
         if photo_b64:
             try:
                 p_bytes = base64.b64decode(photo_b64)
-                ir_p = ImageReader(io.BytesIO(p_bytes))
-                c.drawImage(ir_p, photo_x, photo_y, width=photo_w, height=photo_h, mask="auto")
-                photo_drawn = True
+                with Image.open(io.BytesIO(p_bytes)) as pil_img:
+                    target_w = int(pw * 3)
+                    target_h = int((bh - 2.0) * 3)
+                    img_w, img_h = pil_img.size
+                    scale = max(target_w / img_w, target_h / img_h)
+                    new_w = int(round(img_w * scale))
+                    new_h = int(round(img_h * scale))
+                    resized = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    left = (new_w - target_w) // 2
+                    top = 0
+                    cropped = resized.crop((left, top, left + target_w, top + target_h))
+                    buf = io.BytesIO()
+                    cropped.convert("RGB").save(buf, format="JPEG", quality=90)
+                    buf.seek(0)
+                    ir_p = ImageReader(buf)
+                    c.drawImage(ir_p, bx + 1.0, by + 1.0, width=pw - 1.0, height=bh - 2.0)
+                    photo_drawn = True
             except Exception:
                 photo_drawn = False
-        if not photo_drawn:
-            c.setFillColor(colors.HexColor("#E2E8F0"))
-            c.setStrokeColor(colors.HexColor("#94A3B8"))
-            c.setLineWidth(0.5)
-            c.circle(photo_x + 6.7, photo_y + 7.0, 6.2, fill=1, stroke=1)
-            c.setFillColor(colors.HexColor("#002B49"))
-            c.setFont("Helvetica-Bold", 5.5)
-            inits = "".join(part[0] for part in p_name.split()[:2]).upper()
-            c.drawCentredString(photo_x + 6.7, photo_y + 5.0, inits)
 
-        # Nome Giocatore
+        if not photo_drawn:
+            c.setFillColor(colors.HexColor("#F1F5F9"))
+            c.roundRect(bx + 1.0, by + 1.0, pw - 1.0, bh - 2.0, 2, fill=1, stroke=0)
+            inits = "".join(part[0] for part in p_name.split()[:2]).upper()
+            c.setFillColor(colors.HexColor("#002B49"))
+            c.setFont("Helvetica-Bold", 8.0)
+            c.drawCentredString(bx + (pw / 2.0), by + (bh / 2.0) - 2.5, inits)
+
+        # Linea verticale divisoria tra foto e dati
+        c.setStrokeColor(colors.HexColor("#E2E8F0"))
+        c.setLineWidth(0.5)
+        c.line(bx + pw, by + 1.0, bx + pw, by + bh - 1.0)
+
+        # 3. Sezione Dati Destra
+        rx = bx + pw
+        rw = bw - pw
+
+        # Header area (altezza 14.0 pt)
+        hdr_h = 14.0
+        hdr_y = by + bh - hdr_h
+        c.setStrokeColor(colors.HexColor("#E2E8F0"))
+        c.setLineWidth(0.4)
+        c.line(rx, hdr_y, bx + bw - 1.0, hdr_y)
+
+        # Badge circolare con numero di maglia
+        badge_r = 5.2
+        badge_cx = rx + 7.5
+        badge_cy = by + bh - 7.0
+        c.setFillColor(colors.HexColor(border_hex))
+        c.circle(badge_cx, badge_cy, badge_r, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 5.8)
+        c.drawCentredString(badge_cx, badge_cy - 2.0, str(j_num))
+
+        # Nome giocatore formattato
         parts = p_name.strip().split()
         if len(parts) >= 3 and parts[1].lower() in ('di', 'de', 'del', 'della', 'da'):
             display_name = f"{parts[0][0]}. {' '.join(parts[1:])}"
@@ -3695,88 +3703,111 @@ def _draw_schieramento_pitch_on_canvas(
 
         c.setFillColor(colors.HexColor("#0F172A"))
         d_len = len(display_name)
-        f_size = 5.1 if d_len > 14 else (5.7 if d_len > 11 else 6.1)
+        f_size = 5.0 if d_len > 13 else (5.6 if d_len > 10 else 6.2)
         c.setFont("Helvetica-Bold", f_size)
-        c.drawString(bx + 33.5, by + bh - 9.6, display_name)
+        c.drawString(rx + 14.5, by + bh - 8.8, display_name)
 
-        # Minuti giocati in alto a destra
-        c.setFillColor(colors.HexColor("#475569"))
-        c.setFont("Helvetica", 4.4)
-        c.drawRightString(bx + bw - 3.5, by + bh - 6.3, "min")
-        c.setFillColor(colors.HexColor("#0369A1"))
+        # Minuti in alto a destra
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica-Bold", 4.0)
+        c.drawRightString(bx + bw - 3.0, by + bh - 5.5, "min")
+        c.setFillColor(colors.HexColor("#0284C7"))
         c.setFont("Helvetica-Bold", 6.2)
-        c.drawRightString(bx + bw - 3.5, by + bh - 13.8, f"{int(round(minuti_val))}")
+        c.drawRightString(bx + bw - 3.0, by + bh - 12.0, f"{int(round(minuti_val))}")
 
-        # Griglia 6 Metriche GPExe
-        c_left_lbl = bx + 4.5
-        c_left_val = bx + 22.5
-        c_right_lbl = bx + (bw / 2.0) + 1.5
-        c_right_val = bx + bw - 4.0
+        # Griglia 6 Metriche GPExe (2 colonne x 3 righe)
+        pos_str = f"{pos_val:.1f}" if pos_val > 0 else "0"
+        dt_str = f"{int(dt_val):,}".replace(",", ".") if dt_val > 0 else "0"
+        dc_str = f"{int(dc_val):,}".replace(",", ".") if dc_val > 0 else "0"
+        hml_str = f"{int(hml_val):,}".replace(",", ".") if hml_val > 0 else "0"
+        vhml_str = f"{int(vhml_val):,}".replace(",", ".") if vhml_val > 0 else "0"
+        hsr_str = f"{int(hsr_val):,}".replace(",", ".") if hsr_val > 0 else "0"
 
-        row1_y = by + 29.8
-        row2_y = by + 21.1
-        row3_y = by + 12.4
+        c1_lbl_x = rx + 2.5
+        c1_val_x = rx + (rw / 2.0) - 2.5
+        c2_lbl_x = rx + (rw / 2.0) + 2.0
+        c2_val_x = bx + bw - 3.0
 
-        # RIGA 1: PoS & DT
+        r1_y = by + 27.5
+        r2_y = by + 19.0
+        r3_y = by + 10.5
+
+        # Riga 1: PoS | DT
         c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_left_lbl, row1_y, "PoS")
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c1_lbl_x, r1_y, "PoS")
         c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawString(c_left_val, row1_y, f"{pos_val:.1f}" if pos_val > 0 else "0")
-
-        c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_right_lbl, row1_y, "DT")
-        c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawRightString(c_right_val, row1_y, f"{int(dt_val):,}".replace(",", ".") if dt_val > 0 else "0")
-
-        # RIGA 2: DC & Hml
-        c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_left_lbl, row2_y, "DC")
-        c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawString(c_left_val, row2_y, f"{int(dc_val):,}".replace(",", ".") if dc_val > 0 else "0")
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c1_val_x, r1_y, pos_str)
 
         c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_right_lbl, row2_y, "Hml")
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c2_lbl_x, r1_y, "DT")
         c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawRightString(c_right_val, row2_y, f"{int(hml_val):,}".replace(",", ".") if hml_val > 0 else "0")
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c2_val_x, r1_y, dt_str)
 
-        # RIGA 3: VHml & HSR
+        # Riga 2: DC | Hml
         c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_left_lbl, row3_y, "VHml")
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c1_lbl_x, r2_y, "DC")
         c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawString(c_left_val, row3_y, f"{int(vhml_val):,}".replace(",", ".") if vhml_val > 0 else "0")
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c1_val_x, r2_y, dc_str)
 
         c.setFillColor(colors.HexColor("#64748B"))
-        c.setFont("Helvetica", 4.9)
-        c.drawString(c_right_lbl, row3_y, "HSR")
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c2_lbl_x, r2_y, "Hml")
         c.setFillColor(colors.HexColor("#0F172A"))
-        c.setFont("Helvetica-Bold", 5.6)
-        c.drawRightString(c_right_val, row3_y, f"{int(hsr_val):,}".replace(",", ".") if hsr_val > 0 else "0")
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c2_val_x, r2_y, hml_str)
 
-        # RIGA 4 (Fascia Inferiore Oval Match): CIC | TCK | RCK
-        row4_y = by + 3.4
-        third_w = (bw - 6.0) / 3.0
+        # Riga 3: VHml | HSR
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c1_lbl_x, r3_y, "VHml")
+        c.setFillColor(colors.HexColor("#0F172A"))
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c1_val_x, r3_y, vhml_str)
+
+        c.setFillColor(colors.HexColor("#64748B"))
+        c.setFont("Helvetica", 4.5)
+        c.drawString(c2_lbl_x, r3_y, "HSR")
+        c.setFillColor(colors.HexColor("#0F172A"))
+        c.setFont("Helvetica-Bold", 5.4)
+        c.drawRightString(c2_val_x, r3_y, hsr_str)
+
+        # Linea divisoria tratteggiata sopra i dati Oval
+        c.setStrokeColor(colors.HexColor("#CBD5E1"))
+        c.setLineWidth(0.4)
+        c.setDash([2, 2])
+        c.line(rx + 1.5, by + 8.8, bx + bw - 1.5, by + 8.8)
+        c.setDash([])
+
+        # Fascia Inferiore Dati Oval (CIC / TCK / RCK)
+        cic_str = f"{int(round(cic_val))}" if cic_val > 0 else "0"
+        tck_str = f"{int(round(tck_val))}" if tck_val > 0 else "0"
+        rck_str = f"{int(round(rck_val))}" if rck_val > 0 else "0"
+
+        r4_y = by + 2.5
+        third_w = rw / 3.0
         ov_items = [
-            ("CIC", f"{int(round(cic_val))}" if cic_val > 0 else "0", "#0369A1", bx + 3.5),
-            ("TCK", f"{int(round(tck_val))}" if tck_val > 0 else "0", "#B91C1C", bx + 3.5 + third_w),
-            ("RCK", f"{int(round(rck_val))}" if rck_val > 0 else "0", "#047857", bx + 3.5 + 2.0 * third_w),
+            ("CIC", cic_str, "#0369A1", rx + 2.0),
+            ("TCK", tck_str, "#B91C1C", rx + third_w + 1.0),
+            ("RCK", rck_str, "#047857", rx + 2.0 * third_w + 1.0),
         ]
         for o_lbl, o_val_s, o_col, ox in ov_items:
             c.setFillColor(colors.HexColor("#64748B"))
-            c.setFont("Helvetica-Bold", 4.4)
-            c.drawString(ox, row4_y, o_lbl)
+            c.setFont("Helvetica-Bold", 4.3)
+            c.drawString(ox, r4_y, o_lbl)
             c.setFillColor(colors.HexColor(o_col))
             c.setFont("Helvetica-Bold", 5.4)
-            c.drawRightString(ox + third_w - 2.5, row4_y, o_val_s)
+            c.drawRightString(ox + third_w - 2.5, r4_y, o_val_s)
+
+        # 4. Cornice arrotondata per ruolo
+        c.setStrokeColor(colors.HexColor(border_hex))
+        c.setLineWidth(1.8)
+        c.roundRect(bx, by, bw, bh, 3.5, fill=0, stroke=1)
 
     # Posizionamento Titolari 1–15 con spaziatura netta tra le file (in particolare tra 9-12 e 10-13)
     cw, ch = 118, 54.5
@@ -3819,70 +3850,40 @@ def _draw_schieramento_pitch_on_canvas(
 
     # Header Finishers
     c.setFillColor(colors.HexColor("#D4AF37"))
-    c.setFont("Helvetica-Bold", 8.5)
-    c.drawCentredString(fin_x + (fin_w / 2.0), fin_y + fin_h - 15, "FINISHERS (16–23) • PANCHINA")
+    c.setFont("Helvetica-Bold", 9.0)
+    c.drawCentredString(fin_x + (fin_w / 2.0), fin_y + fin_h - 14, "FINISHERS (16–23)")
+    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.setFont("Helvetica-Bold", 6.5)
+    c.drawCentredString(fin_x + (fin_w / 2.0), fin_y + fin_h - 24, "PANCHINA GARA")
 
-    fcw, fch = 104, 55
+    fcw, fch = 104, 54.5
     fin_col1_x = fin_x + 5
     fin_col2_x = fin_x + 113
 
+    # Sotto-intestazioni Colonne
+    c.setFillColor(colors.HexColor("#FCD34D"))
+    c.setFont("Helvetica-Bold", 6.2)
+    c.drawCentredString(fin_col1_x + (fcw / 2.0), fin_y + fin_h - 36, "COLONNA 1")
+    c.drawCentredString(fin_col2_x + (fcw / 2.0), fin_y + fin_h - 36, "COLONNA 2")
+
     finisher_positions = {
-        16: (fin_col1_x, 445),
-        20: (fin_col2_x, 445),
-        17: (fin_col1_x, 362),
-        21: (fin_col2_x, 362),
-        18: (fin_col1_x, 279),
-        22: (fin_col2_x, 279),
-        19: (fin_col1_x, 196),
-        23: (fin_col2_x, 196),
+        16: (fin_col1_x, 432),
+        20: (fin_col2_x, 432),
+        17: (fin_col1_x, 328),
+        21: (fin_col2_x, 328),
+        18: (fin_col1_x, 224),
+        22: (fin_col2_x, 224),
+        19: (fin_col1_x, 120),
+        23: (fin_col2_x, 120),
     }
 
     for f_num, (f_x, f_y) in finisher_positions.items():
         _draw_player_box(f_x, f_y, fcw, fch, f_num)
 
-    # Box riepilogo panchina + legenda cornici ruolo
-    c.setFillColor(colors.HexColor("#002B49"))
-    c.roundRect(fin_x + 6, 100, fin_w - 12, 82, 4, fill=1, stroke=0)
-    c.setFillColor(colors.HexColor("#D4AF37"))
-    c.setFont("Helvetica-Bold", 6.8)
-    c.drawCentredString(fin_x + (fin_w / 2.0), 170, "LEGENDA CORNICI RUOLO & PANCHINA")
-
-    # Legenda visiva 6 colori (Avanti Blu / TreQuarti Rosso)
-    leg_items_av = [("#172554", "1-3 1ª Linea"), ("#2563EB", "4-5 2ª Linea"), ("#38BDF8", "6-8 3ª Linea")]
-    leg_items_tq = [("#7F1D1D", "9-10 Mediani"), ("#EF4444", "12-13 Centri"), ("#FDA4AF", "11-15 Ali/Est.")]
-    for idx_l, (col_h, lbl_l) in enumerate(leg_items_av):
-        lx = fin_x + 12 + idx_l * 68
-        c.setFillColor(colors.HexColor(col_h))
-        c.roundRect(lx, 155, 8, 6, 1.5, fill=1, stroke=0)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 5.2)
-        c.drawString(lx + 10, 155.5, lbl_l)
-    for idx_l, (col_h, lbl_l) in enumerate(leg_items_tq):
-        lx = fin_x + 12 + idx_l * 68
-        c.setFillColor(colors.HexColor(col_h))
-        c.roundRect(lx, 144, 8, 6, 1.5, fill=1, stroke=0)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 5.2)
-        c.drawString(lx + 10, 144.5, lbl_l)
-
-    fin_av_list, fin_tq_list = [], []
-    for f_j in sorted(finishers_map.keys()):
-        fr = finishers_map[f_j]
-        fn_short = str(fr.get("player_name") or "").strip().split()[-1] if str(fr.get("player_name") or "").strip() else ""
-        f_col = _get_pitch_card_border_color(f_j, str(fr.get("role") or ""), str(fr.get("player_name") or ""))
-        if f_col in ("#172554", "#2563EB", "#38BDF8"):
-            fin_av_list.append(f"{f_j} {fn_short}")
-        else:
-            fin_tq_list.append(f"{f_j} {fn_short}")
-
-    c.setFillColor(colors.HexColor("#BAE6FD"))
-    c.setFont("Helvetica", 5.4)
-    c.drawCentredString(fin_x + (fin_w / 2.0), 130, f"Avanti: {', '.join(fin_av_list) if fin_av_list else '-'}")
-    c.setFillColor(colors.HexColor("#FECDD3"))
-    c.drawCentredString(fin_x + (fin_w / 2.0), 119, f"TreQuarti: {', '.join(fin_tq_list) if fin_tq_list else '-'}")
-    c.setFillColor(colors.HexColor("#94A3B8"))
-    c.setFont("Helvetica-Oblique", 4.9)
-    c.drawCentredString(fin_x + (fin_w / 2.0), 106, "* Dati analitici completi e minutaggi consultabili a Pagina 2.")
+    # Footer discreto in fondo al pannello
+    c.setFillColor(colors.HexColor("#475569"))
+    c.setFont("Helvetica-Bold", 5.5)
+    c.drawCentredString(fin_x + (fin_w / 2.0), 102, "FEDERAZIONE ITALIANA RUGBY • NAZIONALE MAGGIORE")
 
     # --------------------------------------------------------------------------
     # 5. BOX INFERIORI: MEDIE REPARTI & LEGENDA GPEXE

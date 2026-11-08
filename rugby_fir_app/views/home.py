@@ -3450,7 +3450,6 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
         </div>
         """
         st.html("".join(line.strip() for line in legenda_html.splitlines() if line.strip()))
-        st.html("".join(line.strip() for line in legenda_html.splitlines() if line.strip()))
 
     # Slogan Banner finale FIR
     st.markdown(
