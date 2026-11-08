@@ -64,8 +64,8 @@ def render_login_page(t: dict):
                             if user_info["role"] == "admin":
                                 st.session_state["active_page"] = "dashboard_home"
                             else:
-                                st.session_state["active_page"] = "analisi_settimana"
-                                st.session_state["active_subtab_analisi_settimana"] = "report_settimana"
+                                st.session_state["active_page"] = "analisi_sessione_giornata"
+                                st.session_state["active_subtab_analisi_sessione_giornata"] = "report_sessione"
                             st.session_state["_scroll_top_counter"] = st.session_state.get("_scroll_top_counter", 0) + 1
                             st.success(f"Bentornato, {user_info['full_name']}!")
                             st.rerun()

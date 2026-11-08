@@ -158,11 +158,12 @@ def main():
         else:
             # Per profili di sola visualizzazione (Viewer / Staff)
             nav_items = [
-                ("analisi_settimana", "1. 🗓️ Analisi GPS settimana"),
-                ("medie_confronti", "2. ⚖️ Medie e confronti"),
-                ("analisi_individuale", "3. 👤 Analisi individuale"),
-                ("cambio_password", "4. 🔑 Cambio password"),
-                ("logout", "5. 🚪 Logout"),
+                ("analisi_sessione_giornata", "1. ⏱️ Analisi GPS sessione/giornata"),
+                ("analisi_settimana", "2. 🗓️ Analisi GPS settimana"),
+                ("medie_confronti", "3. ⚖️ Medie e confronti"),
+                ("analisi_individuale", "4. 👤 Analisi individuale"),
+                ("cambio_password", "5. 🔑 Cambio password"),
+                ("logout", "6. 🚪 Logout"),
             ]
 
         for page_id, page_label in nav_items:
@@ -229,11 +230,11 @@ def main():
 
     page = st.session_state["active_page"]
     allowed_viewer_pages = (
-        "analisi_settimana", "medie_confronti", "analisi_individuale", "cambio_password"
+        "analisi_sessione_giornata", "analisi_settimana", "medie_confronti", "analisi_individuale", "cambio_password"
     )
     if user_role != "admin" and page not in allowed_viewer_pages:
-        page = "analisi_settimana"
-        st.session_state["active_page"] = "analisi_settimana"
+        page = "analisi_sessione_giornata"
+        st.session_state["active_page"] = "analisi_sessione_giornata"
 
     if st.session_state.get("_last_rendered_page") != page:
         st.session_state["_last_rendered_page"] = page
