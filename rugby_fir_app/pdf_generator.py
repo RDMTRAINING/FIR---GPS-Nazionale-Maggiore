@@ -1417,65 +1417,159 @@ def _build_densita_individual_rl_table(df_dens: pd.DataFrame) -> Table:
     return tbl
 
 
+def _build_semaforo_kpi_rl_table(kpis: dict) -> Table:
+    """Costruisce le 4 card KPI per il Semaforo Vmax identiche al portale FIR."""
+    title_g = ParagraphStyle("KpiTitleG", fontName="Helvetica-Bold", fontSize=7.2, leading=9.0, textColor=colors.HexColor("#15803D"), alignment=1)
+    title_y = ParagraphStyle("KpiTitleY", fontName="Helvetica-Bold", fontSize=7.2, leading=9.0, textColor=colors.HexColor("#B45309"), alignment=1)
+    title_r = ParagraphStyle("KpiTitleR", fontName="Helvetica-Bold", fontSize=7.2, leading=9.0, textColor=colors.HexColor("#B91C1C"), alignment=1)
+    title_b = ParagraphStyle("KpiTitleB", fontName="Helvetica-Bold", fontSize=7.2, leading=9.0, textColor=colors.HexColor("#0369A1"), alignment=1)
+
+    val_g = ParagraphStyle("KpiValG", fontName="Helvetica-Bold", fontSize=11.5, leading=14.0, textColor=colors.HexColor("#15803D"), alignment=1)
+    val_y = ParagraphStyle("KpiValY", fontName="Helvetica-Bold", fontSize=11.5, leading=14.0, textColor=colors.HexColor("#B45309"), alignment=1)
+    val_r = ParagraphStyle("KpiValR", fontName="Helvetica-Bold", fontSize=11.5, leading=14.0, textColor=colors.HexColor("#B91C1C"), alignment=1)
+    val_b = ParagraphStyle("KpiValB", fontName="Helvetica-Bold", fontSize=11.5, leading=14.0, textColor=colors.HexColor("#0369A1"), alignment=1)
+
+    n_green = kpis.get("n_green", 0)
+    n_yellow = kpis.get("n_yellow", 0)
+    n_red = kpis.get("n_red", 0)
+    pct_green = kpis.get("pct_green", 0.0)
+    avg_wpct = kpis.get("avg_wpct", 0.0)
+    w_start = kpis.get("w_start", "")
+    w_end = kpis.get("w_end", "")
+
+    header_row = [
+        Paragraph("COPERTI (&ge;85% ULTIMI 7gg)", title_g),
+        Paragraph("DA RICHIAMARE (8–14gg)", title_y),
+        Paragraph("SCOPERTI (&gt;14gg SENZA &ge;85%)", title_r),
+        Paragraph("PICCO MEDIO % VMAX SETTIMANA", title_b),
+    ]
+
+    body_row = [
+        Paragraph(f"<b>{n_green} atleti</b><br/><font size='6.8' color='#475569'>{pct_green:.0f}% del gruppo</font>", val_g),
+        Paragraph(f"<b>{n_yellow} atleti</b><br/><font size='6.8' color='#475569'>Richiamo velocità consigliato</font>", val_y),
+        Paragraph(f"<b>{n_red} atleti</b><br/><font size='6.8' color='#475569'>Attenzione esposizione sprint</font>", val_r),
+        Paragraph(f"<b>{avg_wpct:.1f}%</b><br/><font size='6.8' color='#475569'>Settimana {w_start} &rarr; {w_end}</font>", val_b),
+    ]
+
+    col_widths = [202, 202, 202, 202]  # sum = 808
+    tbl = Table([header_row, body_row], colWidths=col_widths)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#DCFCE7")),
+        ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#FEF3C7")),
+        ("BACKGROUND", (2, 0), (2, 0), colors.HexColor("#FEE2E2")),
+        ("BACKGROUND", (3, 0), (3, 0), colors.HexColor("#E0F2FE")),
+        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor("#F0FDF4")),
+        ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#FFFBEB")),
+        ("BACKGROUND", (2, 1), (2, 1), colors.HexColor("#FEF2F2")),
+        ("BACKGROUND", (3, 1), (3, 1), colors.HexColor("#F0F9FF")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 3.0),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 2.5),
+        ("TOPPADDING", (0, 1), (-1, 1), 3.5),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 4.0),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+        ("BOX", (0, 0), (0, 1), 1.0, colors.HexColor("#16A34A")),
+        ("BOX", (1, 0), (1, 1), 1.0, colors.HexColor("#F59E0B")),
+        ("BOX", (2, 0), (2, 1), 1.0, colors.HexColor("#DC2626")),
+        ("BOX", (3, 0), (3, 1), 1.0, colors.HexColor("#0284C7")),
+    ]))
+    return tbl
+
+
 def _build_semaforo_vmax_rl_table(df_vmax: pd.DataFrame) -> Table:
-    headers = ["Giocatore", "Ruolo", "Reparto", "Vmax Seduta", "Vmax Raduno", "Vmax Storica", "% Vmax Raduno", "% Vmax Storica", "Stato Prevenzione Hamstring"]
-    col_widths = [158, 80, 70, 70, 70, 70, 75, 75, 140]  # sum = 808
+    """Tabella analitica a 9 colonne conforme alla schermata del portale Semaforo Vmax."""
+    headers = [
+        "Giocatore", "Ruolo / Reparto", "Vmax Roster",
+        "Picco Seduta", "Picco Settimana", "Picco 3 Sett.",
+        "Ultima Toccata ≥85%", "Ultima Toccata ≥90%", "Semaforo Vmax"
+    ]
+    col_widths = [130, 95, 65, 78, 80, 80, 90, 90, 100]  # sum = 808
     data_rows = [headers]
     cmds = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002B49")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
-        ("LEADING", (0, 0), (-1, -1), 7.6),
-        ("ALIGN", (0, 0), (0, -1), "LEFT"),
-        ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.6),
+        ("LEADING", (0, 0), (-1, -1), 7.8),
+        ("ALIGN", (0, 0), (1, -1), "LEFT"),
+        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
         ("LEFTPADDING", (0, 0), (-1, -1), 2.0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2.0),
         ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
         ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#031926")),
+        ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
     ]
+
     for idx, (_, r) in enumerate(df_vmax.iterrows(), start=1):
         bg = "#FFFFFF" if idx % 2 == 1 else "#F8FAFC"
         cmds.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor(bg)))
+
         p_nm = str(r.get("player_name", "-"))
         role = str(r.get("role", "-"))
         dept = str(r.get("department", "-"))
-        v_sess = float(pd.to_numeric(r.get("v_max", r.get("V_max", 0)), errors="coerce") or 0.0)
-        v_camp = float(pd.to_numeric(r.get("vmax_camp", v_sess), errors="coerce") or 0.0)
-        v_hist = float(pd.to_numeric(r.get("vmax_hist", max(v_camp, 28.0)), errors="coerce") or 0.0)
-        pct_camp = int(round(float(pd.to_numeric(r.get("vmax_pct_camp", (v_sess / max(0.1, v_camp)) * 100), errors="coerce") or 0)))
-        pct_hist = int(round(float(pd.to_numeric(r.get("vmax_pct_hist", (v_sess / max(0.1, v_hist)) * 100), errors="coerce") or 0)))
+        role_dept = f"{role} ({dept})"
 
-        if pct_hist >= 90:
-            st_lbl = "PROTETTO (>=90%)"
+        v_roster = float(r.get("roster_vmax", 30.0) or 30.0)
+        v_roster_str = f"{v_roster:.1f} km/h".replace(".", ",")
+
+        v_sess = float(r.get("sess_vmax", 0.0) or 0.0)
+        p_sess = float(r.get("sess_pct", 0.0) or 0.0)
+        sess_str = f"{v_sess:.1f} ({p_sess:.0f}%)".replace(".", ",") if v_sess > 0 else "—"
+
+        v_wk = float(r.get("week_vmax", 0.0) or 0.0)
+        p_wk = float(r.get("week_pct", 0.0) or 0.0)
+        wk_str = f"{v_wk:.1f} ({p_wk:.0f}%)".replace(".", ",") if v_wk > 0 else "—"
+
+        v_21 = float(r.get("vmax_21", 0.0) or 0.0)
+        p_21 = float(r.get("pct_21", 0.0) or 0.0)
+        v21_str = f"{v_21:.1f} ({p_21:.0f}%)".replace(".", ",") if v_21 > 0 else "—"
+
+        d85 = int(r.get("days_85", 999))
+        l85 = str(r.get("last_85_dt", ""))
+        d85_str = f"{d85} gg fa ({l85})" if d85 < 900 else "Oltre 60 gg / N.D."
+
+        d90 = int(r.get("days_90", 999))
+        l90 = str(r.get("last_90_dt", ""))
+        d90_str = f"{d90} gg fa ({l90})" if d90 < 900 else "Oltre 60 gg / N.D."
+
+        sc = str(r.get("status_code", "red")).lower()
+        if sc == "green":
+            st_lbl = "COPERTO (≤7gg)"
             st_bg, st_fg = "#DCFCE7", "#15803D"
-        elif pct_hist >= 80:
-            st_lbl = "ATTENZIONE (80-89%)"
+        elif sc == "yellow":
+            st_lbl = "RICHIAMO (8–14gg)"
             st_bg, st_fg = "#FEF3C7", "#B45309"
         else:
-            st_lbl = "A RISCHIO (<80%)"
+            st_lbl = "SCOPERTO (>14gg)"
             st_bg, st_fg = "#FEE2E2", "#B91C1C"
 
         row_vals = [
-            p_nm, role, dept,
-            f"{v_sess:.1f}".replace(".", ","),
-            f"{v_camp:.1f}".replace(".", ","),
-            f"{v_hist:.1f}".replace(".", ","),
-            f"{pct_camp}%",
-            f"{pct_hist}%",
-            st_lbl
+            p_nm, role_dept, v_roster_str, sess_str, wk_str, v21_str, d85_str, d90_str, st_lbl
         ]
         data_rows.append(row_vals)
+
         cmds.extend([
+            ("BACKGROUND", (2, idx), (2, idx), colors.HexColor("#F0F9FF")),
+            ("TEXTCOLOR", (2, idx), (2, idx), colors.HexColor("#0369A1")),
+            ("FONTNAME", (2, idx), (2, idx), "Helvetica-Bold"),
+            ("FONTNAME", (4, idx), (5, idx), "Helvetica-Bold"),
             ("BACKGROUND", (8, idx), (8, idx), colors.HexColor(st_bg)),
             ("TEXTCOLOR", (8, idx), (8, idx), colors.HexColor(st_fg)),
-            ("FONTNAME", (8, idx), (8, idx), "Helvetica-Bold")
+            ("FONTNAME", (8, idx), (8, idx), "Helvetica-Bold"),
         ])
+        if p_wk >= 90:
+            cmds.append(("TEXTCOLOR", (4, idx), (4, idx), colors.HexColor("#15803D")))
+        elif p_wk >= 85:
+            cmds.append(("TEXTCOLOR", (4, idx), (4, idx), colors.HexColor("#0284C7")))
+        elif p_wk >= 78:
+            cmds.append(("TEXTCOLOR", (4, idx), (4, idx), colors.HexColor("#B45309")))
+        elif p_wk > 0:
+            cmds.append(("TEXTCOLOR", (4, idx), (4, idx), colors.HexColor("#B91C1C")))
 
-    cmds.append(("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"))
     tbl = Table(data_rows, colWidths=col_widths)
     tbl.setStyle(TableStyle(cmds))
     return tbl
@@ -2119,21 +2213,81 @@ def crea_pdf_cruscotto_fir(
         elements.append(_build_densita_individual_rl_table(df_d))
 
     def _add_page_semaforo_vmax():
-        df_v = semaforo_bundle.get("df") if semaforo_bundle and "df" in semaforo_bundle else (week_bundle.get("df") if week_bundle else None)
-        if df_v is None or df_v.empty:
-            df_v = sess_bundle.get("df") if sess_bundle else pd.DataFrame()
+        nonlocal semaforo_bundle
+        if semaforo_bundle is None or "df" not in semaforo_bundle or "kpis" not in semaforo_bundle:
+            try:
+                import views.report_comparazione
+                p_df = utils.get_players_df()
+                h_df = utils.get_gps_history_df("all")
+                t_map = utils.get_fir_session_types()
+                df_f = views.report_comparazione._prepare_fir_data_with_metrics(h_df, p_df, t_map)
+                cp_all = utils.get_camp_players_df()
+                camps_all = utils.get_camps_df()
+                cur_w_name = str(meta.get("week_name") or "")
+                matching_camps = camps_all[camps_all["name"] == cur_w_name] if not camps_all.empty and "name" in camps_all.columns else pd.DataFrame()
+                cp_for_w = pd.DataFrame()
+                if not matching_camps.empty and not cp_all.empty:
+                    cid = matching_camps.iloc[0]["id"]
+                    cp_for_w = cp_all[cp_all["camp_id"] == cid]
+                semaforo_bundle = views.report_comparazione.build_semaforo_vmax_bundle(
+                    df_fir=df_f,
+                    players_df=p_df,
+                    meta=meta,
+                    camp_players=cp_for_w,
+                    scope_mode="raduno",
+                    src_mode="all",
+                    dept_f="Tutti",
+                )
+            except Exception:
+                pass
+
+        df_v = semaforo_bundle.get("df", pd.DataFrame()) if semaforo_bundle else pd.DataFrame()
+        kpis = semaforo_bundle.get("kpis", {}) if semaforo_bundle else {}
+        fig = semaforo_bundle.get("fig") if semaforo_bundle else None
+        ref_date = str(meta.get("date_str", ""))[:10]
+        w_period = meta.get("week_period_disp", "")
+        w_name = meta.get("week_name", "Raduno")
+
+        n_green = kpis.get("n_green", 0)
+        n_yellow = kpis.get("n_yellow", 0)
+        n_red = kpis.get("n_red", 0)
+        pct_green = kpis.get("pct_green", 0.0)
+        avg_wpct = kpis.get("avg_wpct", 0.0)
+
+        # FOGLIO 1: Dashboard Sintetica (Header FIR + 4 Card KPI + Grafico a barre & target 85/90%)
         elements.append(
             _build_fir_header_table(
-                "Semaforo Vmax & Prevenzione Hamstring",
-                "Esposizione ad Alta Velocità (>=90% Vmax Storica & Raduno)",
-                meta.get("week_name", meta.get("session_name", "Raduno")),
-                f"Periodo: {meta.get('week_period_disp', '')} • Prevenzione Infortuni: Target >= 90% Vmax",
-                "Green: PROTETTO (>=90%)  •  Yellow: ATTENZIONE (80-89%)  •  Red: RISCHIO HAMSTRING (<80%)",
+                "Semaforo Esposizione Alta Velocità",
+                "Monitoraggio Vmax e % Vmax (Soglie 85% e 90%) — Prevenzione Hamstring",
+                f"RADUNO: {w_name}",
+                f"Periodo: {w_period} • Riferimento: {ref_date}",
+                f"Coperti (≥85%): {n_green} ({pct_green:.0f}%) • Da Richiamare: {n_yellow} • Scoperti: {n_red} • Picco Medio: {avg_wpct:.1f}%",
                 total_width=808,
             )
         )
         elements.append(Spacer(1, 4))
-        elements.append(_build_semaforo_vmax_rl_table(df_v))
+        elements.append(_build_semaforo_kpi_rl_table(kpis))
+        elements.append(Spacer(1, 6))
+
+        if fig is not None:
+            elements.append(fig_to_rl_image(fig, width=808, height=360))
+            # FOGLIO 2: Tabella Analitica Dettagliata (9 Colonne conformi al portale)
+            elements.append(PageBreak())
+            elements.append(
+                _build_fir_header_table(
+                    "Semaforo Esposizione Alta Velocità — Dettaglio Atleti",
+                    "Monitoraggio Individuale Vmax, Picchi e Ultima Esposizione ad Alta Velocità",
+                    f"RADUNO: {w_name}",
+                    f"Periodo: {w_period} • Riferimento: {ref_date}",
+                    "Green: ≤7gg (Coperto)  •  Yellow: 8–14gg (Richiamo)  •  Red: >14gg (Scoperto / Mai)",
+                    total_width=808,
+                )
+            )
+            elements.append(Spacer(1, 4))
+            elements.append(_build_semaforo_vmax_rl_table(df_v))
+        else:
+            elements.append(Spacer(1, 4))
+            elements.append(_build_semaforo_vmax_rl_table(df_v))
 
     def _add_page_confronto_settimane():
         if not confronto_settimane_bundle or not confronto_settimane_bundle.get("wk_a"):

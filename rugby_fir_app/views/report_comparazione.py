@@ -1761,50 +1761,29 @@ def _build_multisession_radar(session_list: list) -> go.Figure:
 # ==============================================================================
 # TAB 4: SEMAFORO ESPOSIZIONE ALTA VELOCITÀ (SOLO Vmax & Vmax%)
 # ==============================================================================
-@st.fragment
-def _render_tab_semaforo_vmax(df_fir: pd.DataFrame, players_df: pd.DataFrame, ctx: dict):
-    meta = ctx.get("meta", {})
-    camp_players = ctx.get("camp_players", pd.DataFrame())
+def build_semaforo_vmax_bundle(
+    df_fir: pd.DataFrame,
+    players_df: pd.DataFrame,
+    meta: dict,
+    camp_players: pd.DataFrame = None,
+    scope_mode: str = "raduno",
+    src_mode: str = "all",
+    dept_f: str = "Tutti",
+) -> dict:
+    """
+    Costruisce il bundle unificato per l'analisi Semaforo Esposizione Alta Velocità (Vmax / % Vmax):
+    - Dati individuali filtrati per ambito raduno/roster, storico sedute e reparto
+    - Calcolo giorni dall'ultima esposizione a >=85% e >=90% Vmax
+    - Assegnazione semaforo: Verde (<=7gg), Giallo (8-14gg), Rosso (>14gg / mai)
+    - KPI riassuntivi e grafico Plotly a barre con target 90% e 85%
+    """
     ref_date_str = str(meta.get("date_str") or "2026-11-05")[:10]
     w_start = str(meta.get("week_start") or ref_date_str)[:10]
     w_end = str(meta.get("week_end") or ref_date_str)[:10]
 
-    st.markdown(
-        f"""
-        <div style="background:linear-gradient(90deg, #031926 0%, #002B49 100%); color:#FFFFFF; padding:12px 18px; border-radius:10px; border-left:4px solid #D4AF37; margin-bottom:14px;">
-            <div style="font-size:0.70rem; font-weight:800; color:#D4AF37; text-transform:uppercase; letter-spacing:0.08em;">
-                PREVENZIONE HAMSTRING &bull; MONITORAGGIO ESCLUSIVO SU V MAX &amp; % V MAX
-            </div>
-            <div style="font-size:1.05rem; font-weight:800; margin-top:2px;">
-                🚦 Semaforo Esposizione Alta Velocità (Soglie 85% e 90% Vmax) — Riferimento: {ref_date_str}
-            </div>
-            <div style="font-size:0.78rem; color:#CBD5E1; margin-top:2px;">
-                Calcolato esclusivamente da <b>V max (km/h)</b> e <b>% V max</b> (rispetto alla Vmax di profilo Roster) per verificare chi ha toccato almeno l'85% e il 90% della propria velocità massima.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3 = st.columns([1.5, 1.5, 1.2])
-    scope_mode = c1.selectbox(
-        "Ambito Atleti",
-        ["raduno", "roster"],
-        format_func=lambda k: "Solo Convocati Raduno Attivo" if k == "raduno" else "Intero Roster Nazionale FIR",
-        key="sem_vmax_scope",
-    )
-    src_mode = c2.selectbox(
-        "Storico Sedute Analizzato",
-        ["all", "nazionale"],
-        format_func=lambda k: "Database Totale (FIR + Benetton + Zebre)" if k == "all" else "Solo Nazionale Italiana (FIR)",
-        key="sem_vmax_src",
-    )
-    dept_f = c3.selectbox("Filtro Reparto", ["Tutti", "Avanti", "TreQuarti"], key="sem_vmax_dept")
-
-    gps_src = utils.get_gps_history_df("all") if src_mode == "all" else df_fir.copy()
-    if gps_src.empty:
-        st.info("Nessun dato GPS disponibile.")
-        return
+    gps_src = utils.get_gps_history_df("all") if src_mode == "all" else (df_fir.copy() if df_fir is not None else pd.DataFrame())
+    if gps_src is None or gps_src.empty:
+        return {"df": pd.DataFrame(), "fig": None, "kpis": {}}
 
     gps_src = gps_src.copy()
     gps_src["v_max"] = pd.to_numeric(gps_src.get("v_max", 0), errors="coerce").fillna(0.0)
@@ -1813,16 +1792,35 @@ def _render_tab_semaforo_vmax(df_fir: pd.DataFrame, players_df: pd.DataFrame, ct
 
     # Roster map
     roster_map = {}
-    if not players_df.empty:
+    if players_df is not None and not players_df.empty:
         for _, pr in players_df.iterrows():
             nm = str(pr.get("name_display") or "").strip()
             if nm:
                 roster_map[nm.upper()] = pr.to_dict()
 
-    if scope_mode == "raduno" and not camp_players.empty:
-        target_names = [str(x).strip() for x in camp_players["player_name"].dropna().unique().tolist() if str(x).strip()]
+    if scope_mode == "raduno":
+        if camp_players is None or (isinstance(camp_players, pd.DataFrame) and camp_players.empty):
+            try:
+                cp_all = utils.get_camp_players_df()
+                camps_all = utils.get_camps_df()
+                cur_w_name = str(meta.get("week_name") or "")
+                matching_camps = camps_all[camps_all["name"] == cur_w_name] if not camps_all.empty and "name" in camps_all.columns else pd.DataFrame()
+                if not matching_camps.empty and not cp_all.empty:
+                    cid = matching_camps.iloc[0]["id"]
+                    camp_players = cp_all[cp_all["camp_id"] == cid]
+            except Exception:
+                pass
+        if camp_players is not None and not camp_players.empty and "player_name" in camp_players.columns:
+            target_names = [str(x).strip() for x in camp_players["player_name"].dropna().unique().tolist() if str(x).strip()]
+        elif players_df is not None and not players_df.empty:
+            target_names = [str(x).strip() for x in players_df["name_display"].dropna().unique().tolist() if str(x).strip()]
+        else:
+            target_names = sorted(list(gps_src["player_name"].dropna().unique()))
     else:
-        target_names = [str(x).strip() for x in players_df["name_display"].dropna().unique().tolist() if str(x).strip()]
+        if players_df is not None and not players_df.empty:
+            target_names = [str(x).strip() for x in players_df["name_display"].dropna().unique().tolist() if str(x).strip()]
+        else:
+            target_names = sorted(list(gps_src["player_name"].dropna().unique()))
 
     ref_dt = pd.to_datetime(ref_date_str, errors="coerce")
     if pd.isna(ref_dt):
@@ -1910,19 +1908,26 @@ def _render_tab_semaforo_vmax(df_fir: pd.DataFrame, players_df: pd.DataFrame, ct
 
     res_df = pd.DataFrame(rows)
     if res_df.empty:
-        st.info("Nessun atleta trovato per i filtri selezionati.")
-        return
+        return {"df": pd.DataFrame(), "fig": None, "kpis": {}}
+
+    res_df_sorted = res_df.sort_values(by=["department", "days_85", "player_name"], ascending=[True, False, True]).reset_index(drop=True)
 
     n_green = int((res_df["status_code"] == "green").sum())
     n_yellow = int((res_df["status_code"] == "yellow").sum())
     n_red = int((res_df["status_code"] == "red").sum())
+    pct_green = (n_green / len(res_df) * 100) if len(res_df) > 0 else 0.0
     avg_wpct = float(res_df[res_df["week_pct"] > 0]["week_pct"].mean() or 0.0)
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("🟢 Coperti (≥85% ultimi 7gg)", f"{n_green} atleti", f"{(n_green/len(res_df)*100):.0f}% del gruppo")
-    k2.metric("🟡 Da Richiamare (8–14gg)", f"{n_yellow} atleti", "Richiamo velocità consigliato")
-    k3.metric("🔴 Scoperti (>14gg senza ≥85%)", f"{n_red} atleti", "Attenzione esposizione sprint")
-    k4.metric("⚡ Picco Medio % Vmax Settimana", f"{avg_wpct:.1f}%", f"Settimana {w_start} → {w_end}")
+    kpis = {
+        "n_green": n_green,
+        "n_yellow": n_yellow,
+        "n_red": n_red,
+        "pct_green": pct_green,
+        "avg_wpct": avg_wpct,
+        "w_start": w_start,
+        "w_end": w_end,
+        "total_players": len(res_df),
+    }
 
     # Grafico a barre Picco % Vmax Settimana vs Ultime 3 Settimane
     chart_df = res_df.sort_values(by=["week_pct", "pct_21"], ascending=[False, False]).reset_index(drop=True)
@@ -1961,11 +1966,81 @@ def _render_tab_semaforo_vmax(df_fir: pd.DataFrame, players_df: pd.DataFrame, ct
         yaxis=dict(title="% Vmax Roster", range=[0, 112], ticksuffix="%"),
         legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="center", x=0.5),
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+    return {
+        "df": res_df_sorted,
+        "fig": fig,
+        "kpis": kpis,
+        "ref_date_str": ref_date_str,
+        "w_start": w_start,
+        "w_end": w_end,
+    }
+
+
+@st.fragment
+def _render_tab_semaforo_vmax(df_fir: pd.DataFrame, players_df: pd.DataFrame, ctx: dict):
+    meta = ctx.get("meta", {})
+    camp_players = ctx.get("camp_players", pd.DataFrame())
+    ref_date_str = str(meta.get("date_str") or "2026-11-05")[:10]
+
+    st.markdown(
+        f"""
+        <div style="background:linear-gradient(90deg, #031926 0%, #002B49 100%); color:#FFFFFF; padding:12px 18px; border-radius:10px; border-left:4px solid #D4AF37; margin-bottom:14px;">
+            <div style="font-size:0.70rem; font-weight:800; color:#D4AF37; text-transform:uppercase; letter-spacing:0.08em;">
+                PREVENZIONE HAMSTRING &bull; MONITORAGGIO ESCLUSIVO SU V MAX &amp; % V MAX
+            </div>
+            <div style="font-size:1.05rem; font-weight:800; margin-top:2px;">
+                🚦 Semaforo Esposizione Alta Velocità (Soglie 85% e 90% Vmax) — Riferimento: {ref_date_str}
+            </div>
+            <div style="font-size:0.78rem; color:#CBD5E1; margin-top:2px;">
+                Calcolato esclusivamente da <b>V max (km/h)</b> e <b>% V max</b> (rispetto alla Vmax di profilo Roster) per verificare chi ha toccato almeno l'85% e il 90% della propria velocità massima.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns([1.5, 1.5, 1.2])
+    scope_mode = c1.selectbox(
+        "Ambito Atleti",
+        ["raduno", "roster"],
+        format_func=lambda k: "Solo Convocati Raduno Attivo" if k == "raduno" else "Intero Roster Nazionale FIR",
+        key="sem_vmax_scope",
+    )
+    src_mode = c2.selectbox(
+        "Storico Sedute Analizzato",
+        ["all", "nazionale"],
+        format_func=lambda k: "Database Totale (FIR + Benetton + Zebre)" if k == "all" else "Solo Nazionale Italiana (FIR)",
+        key="sem_vmax_src",
+    )
+    dept_f = c3.selectbox("Filtro Reparto", ["Tutti", "Avanti", "TreQuarti"], key="sem_vmax_dept")
+
+    bundle = build_semaforo_vmax_bundle(
+        df_fir=df_fir,
+        players_df=players_df,
+        meta=meta,
+        camp_players=camp_players,
+        scope_mode=scope_mode,
+        src_mode=src_mode,
+        dept_f=dept_f,
+    )
+    res_df = bundle.get("df", pd.DataFrame())
+    if res_df.empty:
+        st.info("Nessun atleta trovato per i filtri selezionati.")
+        return
+
+    kpis = bundle["kpis"]
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("🟢 Coperti (≥85% ultimi 7gg)", f"{kpis['n_green']} atleti", f"{kpis['pct_green']:.0f}% del gruppo")
+    k2.metric("🟡 Da Richiamare (8–14gg)", f"{kpis['n_yellow']} atleti", "Richiamo velocità consigliato")
+    k3.metric("🔴 Scoperti (>14gg senza ≥85%)", f"{kpis['n_red']} atleti", "Attenzione esposizione sprint")
+    k4.metric("⚡ Picco Medio % Vmax Settimana", f"{kpis['avg_wpct']:.1f}%", f"Settimana {bundle['w_start']} → {bundle['w_end']}")
+
+    st.plotly_chart(bundle["fig"], use_container_width=True)
 
     # Tabella HTML dettagliata
     tr_html = ""
-    for idx, r in res_df.sort_values(by=["department", "days_85", "player_name"], ascending=[True, False, True]).reset_index(drop=True).iterrows():
+    for idx, r in res_df.iterrows():
         bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
         if r["status_code"] == "green":
             badge_st = "background:#DCFCE7; color:#15803D; border:1px solid #BBF7D0;"

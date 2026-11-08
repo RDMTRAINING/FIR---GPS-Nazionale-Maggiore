@@ -2615,6 +2615,10 @@ def render_analisi_settimana(t: dict):
         "3. Solo Semaforo Vmax (Esposizione Alta Velocità & Hamstring)": "Semaforo_Vmax",
     }
 
+    import views.report_comparazione
+    types_map = utils.get_fir_session_types()
+    df_full_sem = views.report_comparazione._prepare_fir_data_with_metrics(hist_df, players_df, types_map)
+
     render_action_bar(
         meta_items=[
             ("RADUNO", f"{meta['week_name']} ({len(df_week)} atleti)"),
@@ -2627,6 +2631,15 @@ def render_analisi_settimana(t: dict):
         generate_fn=lambda codice_sub: crea_pdf_cruscotto_fir(
             codice_sub, meta, sess_bundle, day_bundle, week_bundle,
             settimana_23_bundle=settimana_23_bundle,
+            semaforo_bundle=views.report_comparazione.build_semaforo_vmax_bundle(
+                df_fir=df_full_sem,
+                players_df=players_df,
+                meta=meta,
+                camp_players=camp_players,
+                scope_mode=st.session_state.get("sem_vmax_scope", "raduno"),
+                src_mode=st.session_state.get("sem_vmax_src", "all"),
+                dept_f=st.session_state.get("sem_vmax_dept", "Tutti"),
+            ),
         ),
         filename_fn=lambda codice_sub: f"FIR_Settimana_{codice_sub}_{slugify_name(meta['week_name'])}_{meta['date_str']}.pdf",
     )
