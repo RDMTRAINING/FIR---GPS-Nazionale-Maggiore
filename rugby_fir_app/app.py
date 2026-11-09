@@ -31,6 +31,8 @@ import views.report_comparazione
 import views.admin_utenti
 import views.dashboard_home
 import views.analisi_individuale
+import views.palestra_gymaware
+importlib.reload(views.palestra_gymaware)
 import views.cambio_password
 import global_state
 import views.login
@@ -64,6 +66,7 @@ def main():
         st.session_state["active_page"] = "dashboard_home"
 
     counts = utils.get_history_team_counts()
+    gym_stats = utils.get_gymaware_summary_stats()
     players_df = utils.get_players_df()
     camps_df = utils.get_camps_df()
     matches_df = utils.get_matches_df()
@@ -135,13 +138,14 @@ def main():
             "analisi_settimana": "report_settimana",
             "medie_confronti": "medie_tipologie_fir",
             "analisi_individuale": "gps_atleta",
+            "palestra_gymaware": "squadra_ranking",
             "pannello_controllo": "roster",
             "storico_dati": "nazionale",
             "import_dati": "csv_import",
             "cambio_password": "cambio_password",
         }
 
-        # Menu 10 Voci Principali (nell'ordine esatto richiesto)
+        # Menu Principale (con nuova sezione Palestra & GymAware dopo Analisi Individuale)
         if user_role == "admin":
             nav_items = [
                 ("dashboard_home", "1. 🏠 Home"),
@@ -149,11 +153,12 @@ def main():
                 ("analisi_settimana", "3. 🗓️ Analisi GPS settimana"),
                 ("medie_confronti", "4. ⚖️ Medie e confronti"),
                 ("analisi_individuale", "5. 👤 Analisi individuale"),
-                ("pannello_controllo", "6. ⚙️ Pannello di controllo FIR"),
-                ("storico_dati", "7. 🗄️ Storico dati"),
-                ("import_dati", "8. 📥 Importazione"),
-                ("cambio_password", "9. 🔑 Cambio password"),
-                ("logout", "10. 🚪 Logout"),
+                ("palestra_gymaware", "6. 🏋️ Palestra & GymAware (VBT)"),
+                ("pannello_controllo", "7. ⚙️ Pannello di controllo FIR"),
+                ("storico_dati", "8. 🗄️ Storico dati"),
+                ("import_dati", "9. 📥 Importazione"),
+                ("cambio_password", "10. 🔑 Cambio password"),
+                ("logout", "11. 🚪 Logout"),
             ]
         else:
             # Per profili di sola visualizzazione (Viewer / Staff)
@@ -162,8 +167,9 @@ def main():
                 ("analisi_settimana", "2. 🗓️ Analisi GPS settimana"),
                 ("medie_confronti", "3. ⚖️ Medie e confronti"),
                 ("analisi_individuale", "4. 👤 Analisi individuale"),
-                ("cambio_password", "5. 🔑 Cambio password"),
-                ("logout", "6. 🚪 Logout"),
+                ("palestra_gymaware", "5. 🏋️ Palestra & GymAware (VBT)"),
+                ("cambio_password", "6. 🔑 Cambio password"),
+                ("logout", "7. 🚪 Logout"),
             ]
 
         for page_id, page_label in nav_items:
@@ -220,8 +226,11 @@ def main():
                 <div style="font-size:0.78rem; display:flex; justify-content:space-between; margin-bottom:3px;">
                     <span>GPS Zebre:</span> <b style="color:#A78BFA;">{counts['zebre']:,}</b>
                 </div>
-                <div style="font-size:0.78rem; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,0.1); padding-top:3px; margin-top:3px;">
+                <div style="font-size:0.78rem; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,0.1); padding-top:3px; margin-top:3px; margin-bottom:3px;">
                     <span>Totale GPS:</span> <b>{counts['total']:,}</b>
+                </div>
+                <div style="font-size:0.78rem; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,0.1); padding-top:3px; margin-top:3px;">
+                    <span>GymAware (VBT):</span> <b style="color:#F59E0B;">{gym_stats['total_sets']:,} set</b>
                 </div>
             </div>
             """,
@@ -230,7 +239,12 @@ def main():
 
     page = st.session_state["active_page"]
     allowed_viewer_pages = (
-        "analisi_sessione_giornata", "analisi_settimana", "medie_confronti", "analisi_individuale", "cambio_password"
+        "analisi_sessione_giornata",
+        "analisi_settimana",
+        "medie_confronti",
+        "analisi_individuale",
+        "palestra_gymaware",
+        "cambio_password",
     )
     if user_role != "admin" and page not in allowed_viewer_pages:
         page = "analisi_sessione_giornata"
@@ -263,23 +277,26 @@ def main():
     # 5. Analisi individuale
     elif page == "analisi_individuale":
         views.analisi_individuale.render_analisi_individuale(t)
-    # 6. Pannello di controllo FIR
+    # 6. Palestra & GymAware (VBT)
+    elif page == "palestra_gymaware":
+        views.palestra_gymaware.render_palestra_gymaware(t)
+    # 7. Pannello di controllo FIR
     elif page == "pannello_controllo":
         if user_role == "admin":
             importlib.reload(views.pannello_controllo)
             views.pannello_controllo.render_pannello_controllo(t)
         else:
             st.error("⛔ Accesso riservato agli amministratori.")
-    # 7. Storico dati
+    # 8. Storico dati
     elif page == "storico_dati":
         views.storico_gps.render_storico_gps(t)
-    # 8. Importazione
+    # 9. Importazione
     elif page == "import_dati":
         if user_role == "admin":
             views.import_dati.render_import_dati(t)
         else:
             st.error("⛔ Accesso riservato agli amministratori.")
-    # 9. Cambio password
+    # 10. Cambio password
     elif page == "cambio_password":
         views.cambio_password.render_cambio_password(t)
     # Fallback su Home

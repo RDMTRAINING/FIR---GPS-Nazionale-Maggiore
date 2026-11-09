@@ -4510,6 +4510,552 @@ def build_athlete_21d_chart(df_21: pd.DataFrame, player_name: str):
     return fig
 
 
+# ==============================================================================
+# SEZIONE GYMAWARE (VBT) — VELOCITY BASED TRAINING & ANALISI PALESTRA
+# ==============================================================================
+import sqlite3
+
+GYMAWARE_DB_PATH = os.path.join(DATA_DIR, "rugby_database.sqlite")
+GYMAWARE_SEED_CSV = os.path.join(DATA_DIR, "261109 - Rep Statistics Table.csv")
+
+
+def get_gymaware_conn():
+    return sqlite3.connect(GYMAWARE_DB_PATH)
+
+
+def init_gymaware_db():
+    """Inizializza la tabella gymaware_data nel database SQLite e popola con i dati di seed se vuota."""
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS gymaware_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        athlete_name TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
+        date TEXT,
+        time TEXT,
+        exercise TEXT NOT NULL,
+        set_id TEXT,
+        body_weight REAL,
+        body_weight_pct REAL,
+        bar_weight REAL,
+        total_weight REAL,
+        row_type TEXT NOT NULL,
+        rep_number INTEGER,
+        mean_power REAL,
+        mean_velocity REAL,
+        peak_velocity REAL,
+        mean_power_wkg REAL,
+        height REAL,
+        dip REAL,
+        notes TEXT,
+        sensor TEXT,
+        hardware TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """
+    )
+    conn.commit()
+
+    # Se la tabella è vuota, carica il file seed se disponibile
+    count = cur.execute("SELECT COUNT(*) FROM gymaware_data").fetchone()[0]
+    if count == 0 and os.path.exists(GYMAWARE_SEED_CSV):
+        try:
+            df_seed = pd.read_csv(GYMAWARE_SEED_CSV)
+            save_gymaware_from_df(df_seed, conn=conn, replace_all=True)
+        except Exception as e:
+            print(f"Errore auto-seed GymAware: {e}")
+    conn.close()
+
+
+def save_gymaware_from_df(df: pd.DataFrame, conn=None, replace_all=False) -> int:
+    """Normalizza e inserisce un DataFrame GymAware nel database SQLite."""
+    close_conn = False
+    if conn is None:
+        conn = get_gymaware_conn()
+        close_conn = True
+
+    cur = conn.cursor()
+    if replace_all:
+        cur.execute("DELETE FROM gymaware_data")
+        conn.commit()
+
+    # Normalizza i nomi delle colonne rimuovendo spazi
+    col_map = {c: c.strip().lower() for c in df.columns}
+    df_norm = df.rename(columns=col_map)
+
+    def get_col(df_src, aliases):
+        for a in aliases:
+            if a.lower() in df_src.columns:
+                return df_src[a.lower()]
+        return pd.Series([None] * len(df_src))
+
+    first_name_s = get_col(df_norm, ["first name", "firstname", "first_name"])
+    last_name_s = get_col(df_norm, ["last name", "lastname", "last_name"])
+    athlete_s = get_col(df_norm, ["athlete", "athlete_name", "player"])
+
+    # Calcola athlete_name
+    athlete_names = []
+    for fn, ln, ath in zip(first_name_s, last_name_s, athlete_s):
+        if pd.notna(fn) or pd.notna(ln):
+            name = f"{str(fn or '').strip()} {str(ln or '').strip()}".strip()
+        elif pd.notna(ath):
+            name = str(ath).strip()
+        else:
+            name = "Sconosciuto"
+        athlete_names.append(name)
+
+    def to_clean_float(series):
+        return pd.to_numeric(series.astype(str).str.replace(",", "."), errors="coerce")
+
+    def to_clean_int(series):
+        s = to_clean_float(series)
+        return s.apply(lambda x: int(x) if pd.notna(x) else None)
+
+    date_s = get_col(df_norm, ["date", "data"]).astype(str).str.strip().replace("nan", "")
+    time_s = get_col(df_norm, ["time", "ora"]).astype(str).str.strip().replace("nan", "")
+    exercise_s = get_col(df_norm, ["exercise", "esercizio", "exercise name"]).astype(str).str.strip()
+    set_id_s = get_col(df_norm, ["set id", "set_id", "set"]).astype(str).str.strip()
+    row_type_s = get_col(df_norm, ["row type", "row_type"]).astype(str).str.strip()
+
+    bw_s = to_clean_float(get_col(df_norm, ["body weight (kg)", "body weight", "body_weight"]))
+    bwp_s = to_clean_float(get_col(df_norm, ["body weight %", "body_weight_pct"]))
+    bar_s = to_clean_float(get_col(df_norm, ["bar weight (kg)", "bar weight", "bar_weight"]))
+    tot_w_s = to_clean_float(get_col(df_norm, ["total weight (kg)", "total weight", "total_weight"]))
+    rep_num_s = to_clean_int(get_col(df_norm, ["rep number", "rep_number", "rep"]))
+
+    m_pwr_s = to_clean_float(get_col(df_norm, ["mean power (w)", "mean power", "mean_power"]))
+    m_vel_s = to_clean_float(get_col(df_norm, ["mean velocity (m/s)", "mean velocity", "mean_velocity"]))
+    p_vel_s = to_clean_float(get_col(df_norm, ["peak velocity (m/s)", "peak velocity", "peak_velocity"]))
+    pwr_kg_s = to_clean_float(get_col(df_norm, ["mean power (w/kg)", "mean_power_wkg"]))
+    height_s = to_clean_float(get_col(df_norm, ["height (m)", "height"]))
+    dip_s = to_clean_float(get_col(df_norm, ["dip (m)", "dip"]))
+
+    notes_s = get_col(df_norm, ["notes", "note"]).astype(str).str.strip().replace("nan", "")
+    sensor_s = get_col(df_norm, ["sensor"]).astype(str).str.strip().replace("nan", "")
+    hw_s = get_col(df_norm, ["hardware"]).astype(str).str.strip().replace("nan", "")
+
+    rows_to_insert = []
+    for i in range(len(df_norm)):
+        rows_to_insert.append((
+            athlete_names[i],
+            str(first_name_s.iloc[i] or "").strip(),
+            str(last_name_s.iloc[i] or "").strip(),
+            date_s.iloc[i],
+            time_s.iloc[i],
+            exercise_s.iloc[i],
+            set_id_s.iloc[i],
+            float(bw_s.iloc[i]) if pd.notna(bw_s.iloc[i]) else None,
+            float(bwp_s.iloc[i]) if pd.notna(bwp_s.iloc[i]) else None,
+            float(bar_s.iloc[i]) if pd.notna(bar_s.iloc[i]) else None,
+            float(tot_w_s.iloc[i]) if pd.notna(tot_w_s.iloc[i]) else None,
+            row_type_s.iloc[i],
+            int(rep_num_s.iloc[i]) if pd.notna(rep_num_s.iloc[i]) else None,
+            float(m_pwr_s.iloc[i]) if pd.notna(m_pwr_s.iloc[i]) else None,
+            float(m_vel_s.iloc[i]) if pd.notna(m_vel_s.iloc[i]) else None,
+            float(p_vel_s.iloc[i]) if pd.notna(p_vel_s.iloc[i]) else None,
+            float(pwr_kg_s.iloc[i]) if pd.notna(pwr_kg_s.iloc[i]) else None,
+            float(height_s.iloc[i]) if pd.notna(height_s.iloc[i]) else None,
+            float(dip_s.iloc[i]) if pd.notna(dip_s.iloc[i]) else None,
+            notes_s.iloc[i],
+            sensor_s.iloc[i],
+            hw_s.iloc[i],
+        ))
+
+    cur.executemany(
+        """
+    INSERT INTO gymaware_data (
+        athlete_name, first_name, last_name, date, time, exercise, set_id,
+        body_weight, body_weight_pct, bar_weight, total_weight,
+        row_type, rep_number, mean_power, mean_velocity, peak_velocity,
+        mean_power_wkg, height, dip, notes, sensor, hardware
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+        rows_to_insert,
+    )
+    conn.commit()
+    inserted_count = len(rows_to_insert)
+
+    if close_conn:
+        conn.close()
+    return inserted_count
+
+
+def _format_gymaware_date_to_iso(d_val) -> str:
+    if not d_val:
+        return ""
+    s = str(d_val).strip()
+    if len(s) == 10 and s[2] == "/" and s[5] == "/":
+        return f"{s[6:10]}-{s[3:5]}-{s[0:2]}"
+    return s
+
+
+def get_gymaware_df(
+    exercise: str = None,
+    athlete: str = None,
+    date: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    row_type = None,
+) -> pd.DataFrame:
+    """Interroga la tabella gymaware_data con filtri opzionali su esercizio, atleta, data o periodo."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+
+    query = "SELECT * FROM gymaware_data WHERE 1=1"
+    params = []
+
+    if exercise and exercise != "Tutti":
+        query += " AND exercise = ?"
+        params.append(exercise)
+    if athlete and athlete != "Tutti":
+        query += " AND athlete_name = ?"
+        params.append(athlete)
+    if start_date and end_date:
+        s_iso = _format_gymaware_date_to_iso(start_date)
+        e_iso = _format_gymaware_date_to_iso(end_date)
+        query += " AND (substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) BETWEEN ? AND ?"
+        params.extend([s_iso, e_iso])
+    elif date and date != "Tutte le date":
+        query += " AND date = ?"
+        params.append(date)
+    if row_type:
+        if isinstance(row_type, (list, tuple)):
+            placeholders = ",".join(["?"] * len(row_type))
+            query += f" AND row_type IN ({placeholders})"
+            params.extend(row_type)
+        else:
+            query += " AND row_type = ?"
+            params.append(row_type)
+
+    query += " ORDER BY date DESC, time DESC, set_id ASC, rep_number ASC"
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    return df
+
+
+def get_gymaware_summary_stats(
+    date: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    exercise: str = None,
+) -> dict:
+    """Calcola statistiche globali (KPI strip) in linea con GymAware."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+
+    filter_sql = ""
+    params = []
+    if start_date and end_date:
+        s_iso = _format_gymaware_date_to_iso(start_date)
+        e_iso = _format_gymaware_date_to_iso(end_date)
+        filter_sql += " AND (substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) BETWEEN ? AND ?"
+        params.extend([s_iso, e_iso])
+    elif date and date != "Tutte le date":
+        filter_sql += " AND date = ?"
+        params.append(date)
+    if exercise and exercise != "Tutti":
+        filter_sql += " AND exercise = ?"
+        params.append(exercise)
+
+    total_sets = conn.execute(
+        f"SELECT COUNT(DISTINCT set_id) FROM gymaware_data WHERE 1=1 {filter_sql}",
+        params,
+    ).fetchone()[0]
+    total_reps = conn.execute(
+        f"SELECT COUNT(*) FROM gymaware_data WHERE row_type = 'Rep' {filter_sql}",
+        params,
+    ).fetchone()[0]
+    total_athletes = conn.execute(
+        f"SELECT COUNT(DISTINCT athlete_name) FROM gymaware_data WHERE 1=1 {filter_sql}",
+        params,
+    ).fetchone()[0]
+
+    mean_vel = conn.execute(
+        f"SELECT AVG(mean_velocity) FROM gymaware_data WHERE row_type = 'Average' {filter_sql}",
+        params,
+    ).fetchone()[0]
+    peak_vel = conn.execute(
+        f"SELECT MAX(peak_velocity) FROM gymaware_data WHERE row_type IN ('Rep','Maximum') {filter_sql}",
+        params,
+    ).fetchone()[0]
+    mean_pwr = conn.execute(
+        f"SELECT AVG(mean_power) FROM gymaware_data WHERE row_type = 'Average' {filter_sql}",
+        params,
+    ).fetchone()[0]
+    max_pwr = conn.execute(
+        f"SELECT MAX(mean_power) FROM gymaware_data WHERE row_type IN ('Rep','Maximum') {filter_sql}",
+        params,
+    ).fetchone()[0]
+
+    tonnage = conn.execute(
+        f"SELECT SUM(COALESCE(bar_weight, total_weight, 0)) FROM gymaware_data WHERE row_type = 'Rep' {filter_sql}",
+        params,
+    ).fetchone()[0]
+
+    conn.close()
+    return {
+        "total_sets": total_sets or 0,
+        "total_reps": total_reps or 0,
+        "total_athletes": total_athletes or 0,
+        "mean_velocity": round(mean_vel, 2) if mean_vel else 0.0,
+        "peak_velocity": round(peak_vel, 2) if peak_vel else 0.0,
+        "mean_power": round(mean_pwr, 1) if mean_pwr else 0.0,
+        "max_power": round(max_pwr, 1) if max_pwr else 0.0,
+        "tonnage_kg": round(tonnage, 1) if tonnage else 0.0,
+    }
+
+
+def get_gymaware_ranking(
+    exercise: str = "Trap Bar Jump",
+    metric_col: str = "mean_velocity",
+    criterion: str = "max",
+    date: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    department: str = None,
+) -> pd.DataFrame:
+    """
+    Calcola la classifica degli atleti secondo l'esercizio e la metrica richiesta.
+    criterion: 'max' (Miglior Ripetizione / Peak) oppure 'avg' (Media Serie)
+    """
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+
+    valid_metrics = {
+        "mean_velocity": "mean_velocity",
+        "peak_velocity": "peak_velocity",
+        "mean_power": "mean_power",
+        "mean_power_wkg": "mean_power_wkg",
+        "bar_weight": "bar_weight",
+        "total_weight": "bar_weight",
+        "height": "height",
+    }
+    m_col = valid_metrics.get(metric_col, "mean_velocity")
+
+    where_clause = "WHERE exercise = ?"
+    params = [exercise]
+
+    if start_date and end_date:
+        s_iso = _format_gymaware_date_to_iso(start_date)
+        e_iso = _format_gymaware_date_to_iso(end_date)
+        where_clause += " AND (substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) BETWEEN ? AND ?"
+        params.extend([s_iso, e_iso])
+    elif date and date != "Tutte le date":
+        where_clause += " AND date = ?"
+        params.append(date)
+
+    if criterion == "max":
+        where_clause += f" AND row_type IN ('Maximum', 'Rep') AND {m_col} IS NOT NULL AND {m_col} > 0"
+        sql = f"""
+        SELECT athlete_name,
+               MAX({m_col}) as metric_value,
+               MAX(COALESCE(bar_weight, total_weight, 0)) as load_kg,
+               date as best_date,
+               COUNT(DISTINCT set_id) as total_sets
+        FROM gymaware_data
+        {where_clause}
+        GROUP BY athlete_name
+        ORDER BY metric_value DESC
+        """
+    else:
+        where_clause += f" AND row_type = 'Average' AND {m_col} IS NOT NULL AND {m_col} > 0"
+        sql = f"""
+        SELECT athlete_name,
+               AVG({m_col}) as metric_value,
+               MAX(COALESCE(bar_weight, total_weight, 0)) as load_kg,
+               date as best_date,
+               COUNT(DISTINCT set_id) as total_sets
+        FROM gymaware_data
+        {where_clause}
+        GROUP BY athlete_name
+        ORDER BY metric_value DESC
+        """
+
+    df = pd.read_sql_query(sql, conn, params=params)
+    conn.close()
+
+    if not df.empty:
+        p_df = get_players_df()
+        role_map = {}
+        dept_map = {}
+        club_map = {}
+        for _, pr in p_df.iterrows():
+            dname = str(pr.get("name_display", "")).strip().lower()
+            role_map[dname] = pr.get("role", "N/D")
+            dept_map[dname] = pr.get("department", "N/D")
+            club_map[dname] = pr.get("club", "FIR")
+
+        roles = []
+        depts = []
+        clubs = []
+        for ath in df["athlete_name"]:
+            ath_clean = str(ath).strip().lower()
+            # fallback normalizzazione se match non esatto
+            matched_r = role_map.get(ath_clean)
+            if not matched_r:
+                # cerca per cognome
+                parts = ath_clean.split()
+                last_p = parts[-1] if parts else ""
+                for k, v in role_map.items():
+                    if last_p and last_p in k:
+                        matched_r = v
+                        break
+            final_role = matched_r or "N/D"
+            d_val = dept_map.get(ath_clean)
+            if not d_val or d_val == "N/D":
+                d_val = ROLE_TO_DEPT.get(final_role, "N/D")
+            roles.append(final_role)
+            depts.append(d_val)
+            clubs.append(club_map.get(ath_clean, "FIR"))
+
+        df["role"] = roles
+        df["department"] = depts
+        df["club"] = clubs
+
+        if department and department != "Tutti":
+            df = df[df["department"] == department]
+
+        df = df.reset_index(drop=True)
+        df["rank"] = range(1, len(df) + 1)
+
+    return df
+
+
+def get_gymaware_exercises() -> list:
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT exercise FROM gymaware_data WHERE exercise IS NOT NULL AND exercise != '' ORDER BY exercise ASC"
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_gymaware_athletes() -> list:
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT athlete_name FROM gymaware_data WHERE athlete_name IS NOT NULL AND athlete_name != '' ORDER BY athlete_name ASC"
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_gymaware_dates() -> list:
+    """Ritorna tutte le date uniche ordinate cronologicamente dalla più recente."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    rows = conn.execute("""
+        SELECT DISTINCT date,
+               substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2) as iso_d
+        FROM gymaware_data 
+        WHERE date IS NOT NULL AND date != '' 
+        ORDER BY iso_d DESC
+    """).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def get_gymaware_athletes_for_date(date_str: str) -> list:
+    """Ritorna gli atleti con misurazioni registrate in una specifica data."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT athlete_name FROM gymaware_data WHERE date = ? ORDER BY athlete_name ASC",
+        (date_str,),
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def delete_gymaware_date(date_str: str) -> int:
+    """Elimina tutte le righe di tutti gli atleti per una specifica data."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM gymaware_data WHERE date = ?", (date_str,))
+    conn.commit()
+    count = cur.rowcount
+    conn.close()
+    return count
+
+
+def delete_gymaware_athlete_date(athlete_name: str, date_str: str) -> int:
+    """Elimina tutte le righe di un singolo atleta in una specifica data."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "DELETE FROM gymaware_data WHERE athlete_name = ? AND date = ?",
+        (athlete_name, date_str),
+    )
+    conn.commit()
+    count = cur.rowcount
+    conn.close()
+    return count
+
+
+def update_gymaware_rows(df_edited: pd.DataFrame) -> int:
+    """Aggiorna le righe di gymaware_data a partire da un DataFrame modificato."""
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+    updated_count = 0
+
+    updatable_cols = [
+        "exercise",
+        "bar_weight",
+        "total_weight",
+        "mean_velocity",
+        "peak_velocity",
+        "mean_power",
+        "mean_power_wkg",
+        "height",
+        "dip",
+        "notes",
+    ]
+
+    for _, row in df_edited.iterrows():
+        row_id = row.get("id")
+        if pd.isna(row_id):
+            continue
+        set_clauses = []
+        vals = []
+        for col in updatable_cols:
+            if col in row:
+                val = row[col]
+                val = None if pd.isna(val) else val
+                set_clauses.append(f"{col} = ?")
+                vals.append(val)
+
+        if set_clauses:
+            vals.append(int(row_id))
+            cur.execute(
+                f"UPDATE gymaware_data SET {', '.join(set_clauses)} WHERE id = ?",
+                vals,
+            )
+            updated_count += cur.rowcount
+
+    conn.commit()
+    conn.close()
+    return updated_count
+
+
+def delete_gymaware_all() -> int:
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM gymaware_data")
+    conn.commit()
+    count = cur.rowcount
+    conn.close()
+    return count
+
+
+
 
 
 

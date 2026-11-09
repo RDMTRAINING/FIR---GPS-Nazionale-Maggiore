@@ -310,19 +310,19 @@ def render_dashboard_home(t: dict):
     # SEZIONE 5: HUB DI NAVIGAZIONE RAPIDA
     # --------------------------------------------------------------------------
     st.markdown("### 5. Sezioni Principali della Piattaforma")
-    n1, n2, n3 = st.columns(3)
+    n1, n2, n3, n4 = st.columns(4)
 
     with n1:
         st.markdown(
             """
             <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:14px; min-height:120px;">
-                <div style="font-size:1.1rem; font-weight:800; color:#002B49; margin-bottom:4px;">⏱️ Analisi GPS Sessione & Giornata</div>
-                <div style="font-size:0.75rem; color:#64748B;">Report Sessione, Storytelling, Istogramma, Target HML/HSR, Trombinoscopio e Scheda Giocatori.</div>
+                <div style="font-size:1.05rem; font-weight:800; color:#002B49; margin-bottom:4px;">⏱️ Analisi Sessione</div>
+                <div style="font-size:0.75rem; color:#64748B;">Report Sessione, Storytelling, Istogramma, Target HML/HSR e Trombinoscopio.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Apri Analisi Sessione / Giornata", key="btn_hub_sess", use_container_width=True, type="secondary"):
+        if st.button("Apri Sessione", key="btn_hub_sess", use_container_width=True, type="secondary"):
             st.session_state["active_page"] = "analisi_sessione_giornata"
             st.session_state["active_subtab_analisi_sessione_giornata"] = "story"
             st.rerun()
@@ -331,13 +331,13 @@ def render_dashboard_home(t: dict):
         st.markdown(
             """
             <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:14px; min-height:120px;">
-                <div style="font-size:1.1rem; font-weight:800; color:#002B49; margin-bottom:4px;">🗓️ Analisi GPS Settimana</div>
-                <div style="font-size:0.75rem; color:#64748B;">Report Settimana, 23 Convocati, Semaforo Vmax, Densità HML/HSR e Report 6/12 Weeks.</div>
+                <div style="font-size:1.05rem; font-weight:800; color:#002B49; margin-bottom:4px;">🗓️ Analisi Settimana</div>
+                <div style="font-size:0.75rem; color:#64748B;">Report Settimana, 23 Convocati, Semaforo Vmax, Densità e Report 6/12 Weeks.</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Apri Analisi Settimana", key="btn_hub_week", use_container_width=True, type="secondary"):
+        if st.button("Apri Settimana", key="btn_hub_week", use_container_width=True, type="secondary"):
             st.session_state["active_page"] = "analisi_settimana"
             st.session_state["active_subtab_analisi_settimana"] = "report_settimana"
             st.rerun()
@@ -346,13 +346,28 @@ def render_dashboard_home(t: dict):
         st.markdown(
             """
             <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:14px; min-height:120px;">
-                <div style="font-size:1.1rem; font-weight:800; color:#002B49; margin-bottom:4px;">👤 Analisi Individuale Atleta</div>
+                <div style="font-size:1.05rem; font-weight:800; color:#002B49; margin-bottom:4px;">👤 Analisi Individuale</div>
                 <div style="font-size:0.75rem; color:#64748B;">Passaporto Unificato Atleta 21gg e Scheda Storica Carriera Oval (Caps & Minuti).</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Apri Analisi Individuale", key="btn_hub_indiv", use_container_width=True, type="secondary"):
+        if st.button("Apri Individuale", key="btn_hub_indiv", use_container_width=True, type="secondary"):
             st.session_state["active_page"] = "analisi_individuale"
             st.session_state["active_subtab_analisi_individuale"] = "gps_atleta"
+            st.rerun()
+
+    with n4:
+        st.markdown(
+            """
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:12px; padding:14px; min-height:120px;">
+                <div style="font-size:1.05rem; font-weight:800; color:#002B49; margin-bottom:4px;">🏋️ Palestra & GymAware</div>
+                <div style="font-size:0.75rem; color:#64748B;">Classifiche VBT, Velocità, Potenza, Stima 1RM e Analisi Rep-by-Rep.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Apri GymAware (VBT)", key="btn_hub_gymaware", use_container_width=True, type="primary"):
+            st.session_state["active_page"] = "palestra_gymaware"
+            st.session_state["active_subtab_palestra_gymaware"] = "squadra_ranking"
             st.rerun()
