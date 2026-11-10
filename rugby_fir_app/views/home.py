@@ -825,6 +825,9 @@ def _compute_match_pct_columns(df_in: pd.DataFrame, bench_source: str = "excel")
     - pct_hsr_match = (HSR_18 per Avanti, HSR_20 per Trequarti) / HSRAvg_Match_80' * 100
     """
     df = df_in.copy()
+    if df.empty:
+        return df
+
     if bench_source == "fir":
         hml_b_col, hsr_b_col = "hml_avg_fir", "hsr_avg_fir"
     elif bench_source == "tot":
@@ -832,15 +835,29 @@ def _compute_match_pct_columns(df_in: pd.DataFrame, bench_source: str = "excel")
     else:
         hml_b_col, hsr_b_col = "hml_avg_excel", "hsr_avg_excel"
 
-    hml_bench = pd.to_numeric(df.get(hml_b_col), errors="coerce").fillna(pd.to_numeric(df.get("hml_avg_tot"), errors="coerce")).replace(0, np.nan)
-    hsr_bench = pd.to_numeric(df.get(hsr_b_col), errors="coerce").fillna(pd.to_numeric(df.get("hsr_avg_tot"), errors="coerce")).replace(0, np.nan)
+    s_hml_b = pd.to_numeric(df[hml_b_col], errors="coerce") if hml_b_col in df.columns else pd.Series(np.nan, index=df.index)
+    s_hml_tot = pd.to_numeric(df["hml_avg_tot"], errors="coerce") if "hml_avg_tot" in df.columns else pd.Series(np.nan, index=df.index)
+    hml_bench = s_hml_b.fillna(s_hml_tot).replace(0, np.nan)
 
-    hsr_player_val = np.where(df["department"] == "Avanti", df["HSR_18"], df["HSR_20"])
+    s_hsr_b = pd.to_numeric(df[hsr_b_col], errors="coerce") if hsr_b_col in df.columns else pd.Series(np.nan, index=df.index)
+    s_hsr_tot = pd.to_numeric(df["hsr_avg_tot"], errors="coerce") if "hsr_avg_tot" in df.columns else pd.Series(np.nan, index=df.index)
+    hsr_bench = s_hsr_b.fillna(s_hsr_tot).replace(0, np.nan)
+
+    dept_col = df["department"] if "department" in df.columns else pd.Series("", index=df.index)
+    hsr_18 = df["HSR_18"] if "HSR_18" in df.columns else pd.Series(0.0, index=df.index)
+    hsr_20 = df["HSR_20"] if "HSR_20" in df.columns else pd.Series(0.0, index=df.index)
+    hsr_player_val = np.where(dept_col == "Avanti", hsr_18, hsr_20)
+
     df["hsr_role_val"] = hsr_player_val
-    df["hml_bench_used"] = hml_bench.round(0)
-    df["hsr_bench_used"] = hsr_bench.round(0)
-    df["pct_hml_match"] = np.where(hml_bench > 0, np.round((df["Hml_25"] / hml_bench) * 100.0), 0.0).astype(int)
-    df["pct_hsr_match"] = np.where(hsr_bench > 0, np.round((hsr_player_val / hsr_bench) * 100.0), 0.0).astype(int)
+    df["hml_bench_used"] = hml_bench.round(0).fillna(0)
+    df["hsr_bench_used"] = hsr_bench.round(0).fillna(0)
+
+    hml_val = df["Hml_25"] if "Hml_25" in df.columns else pd.Series(0.0, index=df.index)
+    pct_hml = np.where(hml_bench > 0, np.round((hml_val / hml_bench) * 100.0), 0.0)
+    df["pct_hml_match"] = pd.to_numeric(pd.Series(pct_hml, index=df.index), errors="coerce").fillna(0).astype(int)
+
+    pct_hsr = np.where(hsr_bench > 0, np.round((hsr_player_val / hsr_bench) * 100.0), 0.0)
+    df["pct_hsr_match"] = pd.to_numeric(pd.Series(pct_hsr, index=df.index), errors="coerce").fillna(0).astype(int)
     return df
 
 
@@ -2236,16 +2253,17 @@ def _build_pitch_bundle_for_pdf(hist_df: pd.DataFrame, match_info: dict, meta: d
 
             pg = day_gps[day_gps["player_name"].astype(str).str.strip().str.upper() == pn.upper()] if not day_gps.empty else pd.DataFrame()
             if not pg.empty:
-                dur = float(pd.to_numeric(pg.get("duration", 0), errors="coerce").fillna(0).mean())
-                pos = float(pd.to_numeric(pg.get("v_max", 0), errors="coerce").fillna(0).max())
-                dt = float(pd.to_numeric(pg.get("distance_m", 0), errors="coerce").fillna(0).sum())
-                sp06 = float(pd.to_numeric(pg.get("speed_0_6", 0), errors="coerce").fillna(0).sum())
+                def _sc(c): return pd.to_numeric(pg[c], errors="coerce").fillna(0) if c in pg.columns else pd.Series(0.0, index=pg.index)
+                dur = float(_sc("duration").mean())
+                pos = float(_sc("v_max").max())
+                dt = float(_sc("distance_m").sum())
+                sp06 = float(_sc("speed_0_6").sum())
                 dc = max(0.0, dt - sp06)
-                hml = float(pd.to_numeric(pg.get("mp_25_35", 0), errors="coerce").fillna(0).sum() + pd.to_numeric(pg.get("mp_35_50", 0), errors="coerce").fillna(0).sum() + pd.to_numeric(pg.get("mp_50_100", 0), errors="coerce").fillna(0).sum())
-                vhml = float(pd.to_numeric(pg.get("mp_50_100", 0), errors="coerce").fillna(0).sum())
-                sp18 = float(pd.to_numeric(pg.get("speed_18_20", 0), errors="coerce").fillna(0).sum())
-                sp20 = float(pd.to_numeric(pg.get("speed_20_25", 0), errors="coerce").fillna(0).sum())
-                sp25 = float(pd.to_numeric(pg.get("speed_25_72", 0), errors="coerce").fillna(0).sum())
+                hml = float(_sc("mp_25_35").sum() + _sc("mp_35_50").sum() + _sc("mp_50_100").sum())
+                vhml = float(_sc("mp_50_100").sum())
+                sp18 = float(_sc("speed_18_20").sum())
+                sp20 = float(_sc("speed_20_25").sum())
+                sp25 = float(_sc("speed_25_72").sum())
                 hsr = (sp18 + sp20 + sp25) if dept == "Avanti" else (sp20 + sp25)
                 m_eff = m_oval if (m_oval is not None and m_oval > 0) else min(80.0, dur)
             else:
@@ -2671,35 +2689,64 @@ def render_analisi_settimana(t: dict):
 
 
 def _render_tab_scheda_giocatori(df_sess: pd.DataFrame, meta: dict, sess_bundle: dict, day_bundle: dict, week_bundle: dict):
-    c_opt, c_btn = st.columns([2.4, 1.6])
-    with c_opt:
+    # Opzione: Visualizzazione Sessione Selezionata vs Intera Giornata
+    col_scope, col_opt, col_btn = st.columns([1.6, 1.3, 1.4])
+    with col_scope:
+        scope_choice = st.radio(
+            "Ambito Dati Scheda Giocatori:",
+            ["Sessione Selezionata", "Intera Giornata (Totale Day)"],
+            index=0,
+            horizontal=True,
+            key="rad_scheda_giocatori_scope"
+        )
+    is_day_scope = (scope_choice == "Intera Giornata (Totale Day)")
+    df_source = day_bundle.get("df", df_sess) if is_day_scope else df_sess
+
+    with col_opt:
         only_active = st.checkbox(
-            "Nascondi giocatori con 0 minuti nella seduta (mostra solo atleti scesi in campo)",
+            "Nascondi atleti con 0 min (solo in campo)",
             value=False,
             key="chk_scheda_giocatori_only_active",
         )
-    df_view = df_sess[df_sess["Tempo"] > 0].reset_index(drop=True) if only_active else df_sess
+    df_view = df_source[df_source["Tempo"] > 0].reset_index(drop=True) if only_active else df_source
     sess_bundle["df_players_sheet"] = df_view
 
-    with c_btn:
+    if is_day_scope:
+        sess_bundle["players_sheet_title"] = "Scheda Giocatori"
+        sess_bundle["players_sheet_sub"] = "Dati Individuali Intera Giornata (Totale Day)"
+        day_sess_names = ", ".join(meta.get("day_sessions_list", [meta["session_name"]]))
+        sess_bundle["players_sheet_sess"] = f"Totale Day ({meta.get('date_disp', meta.get('date_str', ''))})"
+        fname = f"FIR_Scheda_Giocatori_GIORNATA_{meta['date_str']}.pdf"
+        html_title = f"Scheda Dati Giocatori — INTERA GIORNATA ({meta.get('date_disp', meta.get('date_str', ''))})"
+        html_sub = f"Data: {meta['date_short']} • Raduno: {meta['week_name']} ({meta['week_competition']}) • Sessioni: {day_sess_names}"
+        btn_label = "📄 Scarica PDF Scheda Giornata (Neutro)"
+    else:
+        sess_bundle["players_sheet_title"] = "Scheda Giocatori"
+        sess_bundle["players_sheet_sub"] = "Dati Individuali di Seduta"
+        sess_bundle["players_sheet_sess"] = meta.get("session_name", "")
+        fname = f"FIR_Scheda_Giocatori_{slugify_name(meta['session_name'])}_{meta['date_str']}.pdf"
+        html_title = f"Scheda Dati Giocatori — {meta['session_name']}"
+        html_sub = f"Data: {meta['date_short']} • Raduno: {meta['week_name']} ({meta['week_competition']}) • Vista: Singola Seduta"
+        btn_label = "📄 Scarica PDF Scheda Seduta (Neutro)"
+
+    with col_btn:
         pdf_bytes = crea_pdf_cruscotto_fir(
             "Scheda_Giocatori", meta, sess_bundle, day_bundle, week_bundle
         )
-        fname = f"FIR_Scheda_Giocatori_{slugify_name(meta['session_name'])}_{meta['date_str']}.pdf"
         st.download_button(
-            label="📄 Scarica PDF Scheda Dati Giocatori (Senza Colori)",
+            label=btn_label,
             data=pdf_bytes,
             file_name=fname,
             mime="application/pdf",
             type="primary",
             use_container_width=True,
-            key="btn_dl_pdf_scheda_giocatori_direct",
+            key=f"btn_dl_pdf_scheda_giocatori_{'day' if is_day_scope else 'sess'}",
         )
 
     neutral_html = _build_player_sheet_neutral_html(
         df_view,
-        f"Scheda Dati Giocatori — {meta['session_name']}",
-        f"Data: {meta['date_short']} • Raduno: {meta['week_name']} ({meta['week_competition']})",
+        html_title,
+        html_sub,
     )
     _render_safe_html(neutral_html)
 
@@ -3000,19 +3047,20 @@ def _render_tab_campo(hist_df: pd.DataFrame, players_df: pd.DataFrame, t: dict, 
 
         p_gps = day_gps[day_gps["player_name"].astype(str).str.strip().str.upper() == str(p_name).strip().upper()] if not day_gps.empty else pd.DataFrame()
         if not p_gps.empty:
-            dur = pd.to_numeric(p_gps.get("duration", 0), errors="coerce").fillna(0).mean()
-            pos = pd.to_numeric(p_gps.get("v_max", 0), errors="coerce").fillna(0).max()  # PoS = Peak of Speed (Vmax in km/h)
-            dt = pd.to_numeric(p_gps.get("distance_m", 0), errors="coerce").fillna(0).sum()
-            sp06 = pd.to_numeric(p_gps.get("speed_0_6", 0), errors="coerce").fillna(0).sum()
+            def _sc_p(c): return pd.to_numeric(p_gps[c], errors="coerce").fillna(0) if c in p_gps.columns else pd.Series(0.0, index=p_gps.index)
+            dur = _sc_p("duration").mean()
+            pos = _sc_p("v_max").max()  # PoS = Peak of Speed (Vmax in km/h)
+            dt = _sc_p("distance_m").sum()
+            sp06 = _sc_p("speed_0_6").sum()
             dc = max(0.0, dt - sp06)
-            mp25 = pd.to_numeric(p_gps.get("mp_25_35", 0), errors="coerce").fillna(0).sum()
-            mp35 = pd.to_numeric(p_gps.get("mp_35_50", 0), errors="coerce").fillna(0).sum()
-            mp50 = pd.to_numeric(p_gps.get("mp_50_100", 0), errors="coerce").fillna(0).sum()
+            mp25 = _sc_p("mp_25_35").sum()
+            mp35 = _sc_p("mp_35_50").sum()
+            mp50 = _sc_p("mp_50_100").sum()
             hml = mp25 + mp35 + mp50
             vhml = mp50
-            sp18 = pd.to_numeric(p_gps.get("speed_18_20", 0), errors="coerce").fillna(0).sum()
-            sp20 = pd.to_numeric(p_gps.get("speed_20_25", 0), errors="coerce").fillna(0).sum()
-            sp25 = pd.to_numeric(p_gps.get("speed_25_72", 0), errors="coerce").fillna(0).sum()
+            sp18 = _sc_p("speed_18_20").sum()
+            sp20 = _sc_p("speed_20_25").sum()
+            sp25 = _sc_p("speed_25_72").sum()
             hsr = (sp18 + sp20 + sp25) if dept == "Avanti" else (sp20 + sp25)
 
             # Minuti: priorità assoluta ai dati Oval Match, altrimenti cap ad 80' da GPS

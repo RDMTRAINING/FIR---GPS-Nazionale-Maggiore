@@ -1778,11 +1778,14 @@ def crea_pdf_cruscotto_fir(
     def _add_page_scheda_giocatori():
         # Pagina singola neutra per i giocatori: SOLO dati individuali senza colori di evidenziazione e senza medie/analisi
         df_players_sheet = sess_bundle.get("df_players_sheet", sess_bundle["df"])
+        sheet_title = sess_bundle.get("players_sheet_title", "Scheda Giocatori")
+        sheet_sub = sess_bundle.get("players_sheet_sub", "Dati Individuali di Seduta")
+        sheet_sess = sess_bundle.get("players_sheet_sess", meta.get("session_name", ""))
         elements.append(
             _build_fir_header_table(
-                "Scheda Giocatori",
-                "Dati Individuali di Seduta",
-                meta.get("session_name", ""),
+                sheet_title,
+                sheet_sub,
+                sheet_sess,
                 f"Data: {meta.get('date_disp', meta.get('date_str', ''))} • Raduno: {meta.get('week_name', '')}",
                 "",
                 total_width=808,
