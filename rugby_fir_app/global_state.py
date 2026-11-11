@@ -349,7 +349,12 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         sel_sess_name = ""
     else:
         cur_sess_key = st.session_state.get("global_selected_session_key")
-        default_sess_idx = sess_labels.index(cur_sess_key) if (cur_sess_key and cur_sess_key in sess_labels) else 0
+        default_sess_idx = 0
+        if cur_sess_key:
+            for idx_s, sl in enumerate(sess_labels):
+                if sl == cur_sess_key or sl.startswith(cur_sess_key):
+                    default_sess_idx = idx_s
+                    break
 
         if st.session_state.get("sb_global_sel_sess") not in sess_labels:
             st.session_state["sb_global_sel_sess"] = sess_labels[default_sess_idx]
