@@ -1388,15 +1388,18 @@ def build_settimana_23_bundle(
     w_end = meta.get("week_end")
     if not w_start or not w_end:
         try:
-            ref_dt_str = m_date or meta.get("date_str", "2026-07-04")
+            ref_dt_str = m_date or meta.get("date_str") or pd.Timestamp.now().normalize().strftime("%Y-%m-%d")
             m_dt = pd.to_datetime(ref_dt_str)
             ws_dt = m_dt - pd.Timedelta(days=m_dt.weekday())
             we_dt = ws_dt + pd.Timedelta(days=6)
             w_start = ws_dt.strftime("%Y-%m-%d")
             w_end = we_dt.strftime("%Y-%m-%d")
         except Exception:
-            w_start = "2026-06-29"
-            w_end = "2026-07-05"
+            cur_t = pd.Timestamp.now().normalize()
+            ws_dt = cur_t - pd.Timedelta(days=cur_t.weekday())
+            we_dt = ws_dt + pd.Timedelta(days=6)
+            w_start = ws_dt.strftime("%Y-%m-%d")
+            w_end = we_dt.strftime("%Y-%m-%d")
 
     week_gps = hist_df[(hist_df["date_str"] >= w_start) & (hist_df["date_str"] <= w_end)].copy()
 

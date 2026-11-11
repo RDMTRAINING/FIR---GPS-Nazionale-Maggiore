@@ -78,41 +78,57 @@ def init_global_state(hist_df: pd.DataFrame = None):
             st.session_state["global_selected_session_key"] = ""
             st.session_state["global_selected_type"] = "Allenamento"
 
-    # 3. Inizializza il Match per il Trombinoscopio Match: preferibilmente il match del raduno o l'ultima gara con dati
-    if "global_selected_match_label" not in st.session_state or not st.session_state["global_selected_match_label"]:
-        lineup_summary = utils.get_lineup_matches_summary()
-        if not lineup_summary.empty:
-            sel_camp_obj = st.session_state.get("global_selected_camp_obj")
-            latest_m = None
-            if sel_camp_obj is not None:
-                try:
-                    c_start = pd.to_datetime(str(sel_camp_obj["start_date"])[:10])
-                    c_end = c_start + pd.Timedelta(days=6)
-                    for _, r in lineup_summary.iterrows():
-                        m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
-                        if not pd.isna(m_d) and c_start <= m_d <= c_end:
-                            latest_m = r
-                            break
-                except Exception:
-                    pass
+    # 3. Inizializza il Match per il Trombinoscopio Match: preferibilmente il match del raduno o la prossima gara
+    lineup_summary = utils.get_lineup_matches_summary()
+    if not lineup_summary.empty:
+        sel_camp_obj = st.session_state.get("global_selected_camp_obj")
+        camp_match_r = None
+        if sel_camp_obj is not None:
+            try:
+                c_start = pd.to_datetime(str(sel_camp_obj["start_date"])[:10])
+                c_end = c_start + pd.Timedelta(days=6)
+                for _, r in lineup_summary.iterrows():
+                    m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
+                    if not pd.isna(m_d) and c_start <= m_d <= c_end:
+                        camp_match_r = r
+                        break
+            except Exception:
+                pass
 
-            if latest_m is None and hist_df is not None and not hist_df.empty:
+        cur_m_lbl = st.session_state.get("global_selected_match_label")
+        cur_m_dt = st.session_state.get("global_selected_match_date")
+        need_reset = False
+        if not cur_m_lbl:
+            need_reset = True
+        elif camp_match_r is not None and cur_m_dt:
+            try:
+                c_start = pd.to_datetime(str(sel_camp_obj["start_date"])[:10])
+                c_end = c_start + pd.Timedelta(days=6)
+                m_d_obj = pd.to_datetime(str(cur_m_dt)[:10], errors="coerce")
+                if not (not pd.isna(m_d_obj) and c_start <= m_d_obj <= c_end):
+                    need_reset = True
+            except Exception:
+                pass
+
+        if need_reset:
+            target_m = camp_match_r
+            if target_m is None and hist_df is not None and not hist_df.empty:
                 hist_dates_set = set(hist_df["date_str"].dropna().astype(str).str[:10].unique())
                 for _, r in lineup_summary.iterrows():
                     if str(r["date_str"])[:10] in hist_dates_set:
-                        latest_m = r
+                        target_m = r
                         break
-            if latest_m is None:
+            if target_m is None:
                 for _, r in lineup_summary.iterrows():
                     if int(r.get("starters_count", 0)) > 0:
-                        latest_m = r
+                        target_m = r
                         break
-            if latest_m is None:
-                latest_m = lineup_summary.iloc[0]
+            if target_m is None:
+                target_m = lineup_summary.iloc[0]
 
-            m_dt = str(latest_m["date_str"])
-            m_nm = str(latest_m["match_name"])
-            m_comp = str(latest_m["competition"])
+            m_dt = str(target_m["date_str"])
+            m_nm = str(target_m["match_name"])
+            m_comp = str(target_m["competition"])
             m_lbl = f"{m_dt} • {m_nm} ({m_comp})"
             st.session_state["global_selected_match_date"] = m_dt
             st.session_state["global_selected_match_name"] = m_nm
@@ -333,8 +349,25 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         if default_m_lbl is None:
             default_m_lbl = m_labels[0]
 
-        if camp_changed and camp_match_lbl:
-            st.session_state["global_selected_match_label"] = camp_match_lbl
+        if camp_match_lbl:
+            cur_m_d = st.session_state.get("global_selected_match_date")
+            is_match_in_camp = False
+            if cur_m_d and selected_camp_obj is not None:
+                try:
+                    c_start = pd.to_datetime(str(selected_camp_obj["start_date"])[:10])
+                    c_end = c_start + pd.Timedelta(days=6)
+                    m_d_obj = pd.to_datetime(str(cur_m_d)[:10], errors="coerce")
+                    if not pd.isna(m_d_obj) and c_start <= m_d_obj <= c_end:
+                        is_match_in_camp = True
+                except Exception:
+                    pass
+            if not is_match_in_camp:
+                st.session_state["global_selected_match_label"] = camp_match_lbl
+                m_d, m_n, m_c = m_lookup[camp_match_lbl]
+                st.session_state["global_selected_match_date"] = m_d
+                st.session_state["global_selected_match_name"] = m_n
+                st.session_state["global_selected_match_comp"] = m_c
+                st.session_state.pop("sb_global_sel_match", None)
 
         cur_m_lbl = st.session_state.get("global_selected_match_label", default_m_lbl)
         if cur_m_lbl not in m_labels:
@@ -457,14 +490,33 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         "session_archetype": cur_type,
     }
 
-    # Match per Trombinoscopio
-    sel_m_d = st.session_state.get("global_selected_match_date", "2026-11-07")
-    sel_m_n = st.session_state.get("global_selected_match_name", "ITALIA - SUD AFRICA")
-    sel_m_c = st.session_state.get("global_selected_match_comp", "Autumn Nations Series 2026")
+    # Match per Trombinoscopio: cerca preferibilmente il match legato al raduno attivo
+    default_match_d = "2026-11-14"
+    default_match_n = "ITALIA - ARGENTINA"
+    default_match_c = "NC Nov 2026"
+    if selected_camp is not None and "start_date" in selected_camp:
+        try:
+            c_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
+            c_end = c_start + pd.Timedelta(days=6)
+            lineup_summary = utils.get_lineup_matches_summary()
+            for _, r in lineup_summary.iterrows():
+                m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
+                if not pd.isna(m_d) and c_start <= m_d <= c_end:
+                    default_match_d = str(r["date_str"])
+                    default_match_n = str(r["match_name"])
+                    default_match_c = str(r["competition"])
+                    break
+        except Exception:
+            pass
+
+    sel_m_d = st.session_state.get("global_selected_match_date", default_match_d)
+    sel_m_n = st.session_state.get("global_selected_match_name", default_match_n)
+    sel_m_c = st.session_state.get("global_selected_match_comp", default_match_c)
     sel_m_lbl = st.session_state.get("global_selected_match_label", f"{sel_m_d} • {sel_m_n} ({sel_m_c})")
 
     match_info = {
         "date_str": sel_m_d,
+        "match_date": sel_m_d,
         "match_name": sel_m_n,
         "competition": sel_m_c,
         "label": sel_m_lbl,

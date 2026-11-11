@@ -48,9 +48,15 @@ def render_dashboard_home(t: dict):
 
     camp_name = meta.get("camp_name", "Nazionale Maggiore")
     week_range = meta.get("week_range", "")
-    sess_date = meta.get("session_date", str(datetime.date.today()))
-    sess_name = meta.get("session_name", "Seduta Attiva")
-    archetype = meta.get("session_archetype", "Standard")
+    raw_sess_date = meta.get("session_date") or meta.get("date_str") or ""
+    sess_date = raw_sess_date if raw_sess_date and raw_sess_date != "--" else "In attesa seduta"
+    raw_sess_name = meta.get("session_name") or ""
+    if not raw_sess_name or raw_sess_name == "Nessuna seduta registrata":
+        sess_name = "Nessuna Seduta"
+        archetype = meta.get("session_archetype") or meta.get("session_type") or "Standard"
+    else:
+        sess_name = raw_sess_name
+        archetype = meta.get("session_archetype") or meta.get("session_type") or "Standard"
 
     # --------------------------------------------------------------------------
     # BANNER DI TESTATA: STATO ATTIVO NAZIONALE
@@ -138,34 +144,56 @@ def render_dashboard_home(t: dict):
     # --------------------------------------------------------------------------
     st.markdown("### 2. Carico & Intensità Seduta Odierna (Nazionale Italiana)")
 
-    dur_val = _safe_float(sub_sess["duration"].mean()) if not sub_sess.empty and "duration" in sub_sess.columns else 0.0
-    fw_roles = set(RUGBY_ROLES[:5])
-    sub_fw = sub_sess[sub_sess["role"].isin(fw_roles)] if ("role" in sub_sess.columns and not sub_sess.empty) else pd.DataFrame()
-    sub_bk = sub_sess[~sub_sess["role"].isin(fw_roles)] if ("role" in sub_sess.columns and not sub_sess.empty) else pd.DataFrame()
-
-    dt_fw = _safe_int(sub_fw["distance_m"].mean()) if not sub_fw.empty and "distance_m" in sub_fw.columns else 0
-    dt_bk = _safe_int(sub_bk["distance_m"].mean()) if not sub_bk.empty and "distance_m" in sub_bk.columns else 0
-
-    hml_fw = _safe_int(sub_fw["mp_25_35"].mean()) if not sub_fw.empty and "mp_25_35" in sub_fw.columns else 0
-    hml_bk = _safe_int(sub_bk["mp_25_35"].mean()) if not sub_bk.empty and "mp_25_35" in sub_bk.columns else 0
-
-    # Top Speed odierna
+    has_valid_gps = False
+    dur_val = 0.0
+    dt_fw = 0
+    dt_bk = 0
+    hml_fw = 0
+    hml_bk = 0
     top_speed_val = 0.0
     top_speed_player = "--"
-    if not sub_sess.empty and "v_max" in sub_sess.columns:
-        vmax_rows = sub_sess[sub_sess["v_max"] > 0].sort_values("v_max", ascending=False)
-        if not vmax_rows.empty:
-            top_speed_val = _safe_float(vmax_rows.iloc[0]["v_max"])
-            top_speed_player = str(vmax_rows.iloc[0]["player_name"])
+
+    if not sub_sess.empty and "distance_m" in sub_sess.columns:
+        sub_clean = sub_sess.copy()
+        for col_n in ["duration", "distance_m", "mp_25_35", "v_max"]:
+            if col_n in sub_clean.columns:
+                sub_clean[col_n] = pd.to_numeric(sub_clean[col_n], errors="coerce").fillna(0.0)
+
+        # Reparto Avanti vs TreQuarti assegnato rigorosamente con la funzione ufficiale FIR
+        sub_clean["department"] = sub_clean.apply(
+            lambda r: utils.get_player_department(r.get("player_name"), r.get("role")), axis=1
+        )
+        sub_fw = sub_clean[sub_clean["department"] == "Avanti"]
+        sub_bk = sub_clean[sub_clean["department"] == "TreQuarti"]
+
+        dt_fw = _safe_int(sub_fw["distance_m"].mean()) if not sub_fw.empty else 0
+        dt_bk = _safe_int(sub_bk["distance_m"].mean()) if not sub_bk.empty else 0
+        dur_val = _safe_float(sub_clean["duration"].mean()) if "duration" in sub_clean.columns else 0.0
+        hml_fw = _safe_int(sub_fw["mp_25_35"].mean()) if not sub_fw.empty and "mp_25_35" in sub_fw.columns else 0
+        hml_bk = _safe_int(sub_bk["mp_25_35"].mean()) if not sub_bk.empty and "mp_25_35" in sub_bk.columns else 0
+
+        if "v_max" in sub_clean.columns:
+            vmax_pos = sub_clean[sub_clean["v_max"] > 1.0]
+            if not vmax_pos.empty:
+                best_row = vmax_pos.sort_values("v_max", ascending=False).iloc[0]
+                top_speed_val = _safe_float(best_row["v_max"])
+                top_speed_player = str(best_row.get("player_name") or "--")
+
+        if dur_val > 0 or dt_fw > 0 or dt_bk > 0 or top_speed_val > 0:
+            has_valid_gps = True
+
+    if not has_valid_gps:
+        st.info(f"ℹ️ Nessun dato GPS registrato per la seduta selezionata (<b>{sess_name}</b>). I carichi e le velocità verranno calcolati automaticamente non appena verrà caricato il file GPS.", icon="ℹ️")
 
     c_g1, c_g2, c_g3, c_g4 = st.columns(4)
 
     with c_g1:
+        dur_str = f"{_safe_int(dur_val)}' min" if has_valid_gps else "-- min"
         st.markdown(
             f"""
             <div style="background:#FFFFFF; border:2px solid #CBD5E1; border-top:5px solid #0284C7; border-radius:12px; padding:14px; box-shadow:0 3px 10px rgba(15,23,42,0.06);">
                 <div style="font-size:0.75rem; font-weight:800; color:#0369A1; text-transform:uppercase;">DURATA SEDUTA</div>
-                <div style="font-size:1.6rem; font-weight:900; color:#0F172A; margin:4px 0;">{_safe_int(dur_val)}' min</div>
+                <div style="font-size:1.6rem; font-weight:900; color:#0F172A; margin:4px 0;">{dur_str}</div>
                 <div style="font-size:0.75rem; color:#64748B;">Volume temporale effettivo</div>
             </div>
             """,
@@ -173,41 +201,46 @@ def render_dashboard_home(t: dict):
         )
 
     with c_g2:
+        fw_dist_str = f"{dt_fw:,} m".replace(",", ".") if has_valid_gps else "-- m"
+        bk_dist_str = f"{dt_bk:,} m".replace(",", ".") if has_valid_gps else "-- m"
         st.markdown(
             f"""
             <div style="background:#FFFFFF; border:2px solid #CBD5E1; border-top:5px solid #16A34A; border-radius:12px; padding:14px; box-shadow:0 3px 10px rgba(15,23,42,0.06);">
                 <div style="font-size:0.75rem; font-weight:800; color:#15803D; text-transform:uppercase;">DISTANZA MEDIA REPARTI</div>
                 <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:4px;">
-                    <div><span style="font-size:0.70rem; color:#64748B;">Avanti:</span> <b style="font-size:1.15rem; color:#0F172A;">{dt_fw:,} m</b></div>
-                    <div><span style="font-size:0.70rem; color:#64748B;">Trequarti:</span> <b style="font-size:1.15rem; color:#0284C7;">{dt_bk:,} m</b></div>
+                    <div><span style="font-size:0.70rem; color:#64748B;">Avanti:</span> <b style="font-size:1.15rem; color:#0F172A;">{fw_dist_str}</b></div>
+                    <div><span style="font-size:0.70rem; color:#64748B;">Trequarti:</span> <b style="font-size:1.15rem; color:#0284C7;">{bk_dist_str}</b></div>
                 </div>
                 <div style="font-size:0.72rem; color:#64748B; margin-top:4px;">Volume totale medio percorso</div>
             </div>
-            """.replace(",", "."),
+            """,
             unsafe_allow_html=True,
         )
 
     with c_g3:
+        fw_hml_str = f"{hml_fw:,} m".replace(",", ".") if has_valid_gps else "-- m"
+        bk_hml_str = f"{hml_bk:,} m".replace(",", ".") if has_valid_gps else "-- m"
         st.markdown(
             f"""
             <div style="background:#FFFFFF; border:2px solid #CBD5E1; border-top:5px solid #D97706; border-radius:12px; padding:14px; box-shadow:0 3px 10px rgba(15,23,42,0.06);">
                 <div style="font-size:0.75rem; font-weight:800; color:#B45309; text-transform:uppercase;">INTENSITÀ (HML &gt;25.5W)</div>
                 <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:4px;">
-                    <div><span style="font-size:0.70rem; color:#64748B;">Avanti:</span> <b style="font-size:1.15rem; color:#0F172A;">{hml_fw:,} m</b></div>
-                    <div><span style="font-size:0.70rem; color:#64748B;">Trequarti:</span> <b style="font-size:1.15rem; color:#D97706;">{hml_bk:,} m</b></div>
+                    <div><span style="font-size:0.70rem; color:#64748B;">Avanti:</span> <b style="font-size:1.15rem; color:#0F172A;">{fw_hml_str}</b></div>
+                    <div><span style="font-size:0.70rem; color:#64748B;">Trequarti:</span> <b style="font-size:1.15rem; color:#D97706;">{bk_hml_str}</b></div>
                 </div>
                 <div style="font-size:0.72rem; color:#64748B; margin-top:4px;">Metri ad alta potenza metabolica</div>
             </div>
-            """.replace(",", "."),
+            """,
             unsafe_allow_html=True,
         )
 
     with c_g4:
+        vmax_str = f"{_safe_float(top_speed_val):.1f} km/h" if has_valid_gps and top_speed_val > 0 else "-- km/h"
         st.markdown(
             f"""
             <div style="background:#FFFFFF; border:2px solid #CBD5E1; border-top:5px solid #9333EA; border-radius:12px; padding:14px; box-shadow:0 3px 10px rgba(15,23,42,0.06);">
                 <div style="font-size:0.75rem; font-weight:800; color:#7E22CE; text-transform:uppercase;">TOP SPEED ODIERNA</div>
-                <div style="font-size:1.55rem; font-weight:900; color:#0F172A; margin:4px 0;">{_safe_float(top_speed_val):.1f} km/h</div>
+                <div style="font-size:1.55rem; font-weight:900; color:#0F172A; margin:4px 0;">{vmax_str}</div>
                 <div style="font-size:0.75rem; color:#7E22CE; font-weight:700;">{top_speed_player}</div>
             </div>
             """,
@@ -222,9 +255,43 @@ def render_dashboard_home(t: dict):
     st.markdown("### 3. Focus Prossimo Match Internazionale")
     m_col1, m_col2 = st.columns([1.8, 1.2])
 
-    target_match = match_info.get("match_name", "GIAPPONE - ITALIA")
-    target_comp = match_info.get("competition", "Nations Championship 2026")
-    target_date = match_info.get("match_date", "2026-07-04")
+    matches_df = utils.get_matches_df()
+    today_dt = pd.Timestamp.now().normalize()
+    today_str = today_dt.strftime("%Y-%m-%d")
+
+    target_match_row = None
+    selected_camp = ctx.get("meta", {}).get("camp_info")
+
+    # 1. Cerca il match della settimana del raduno attivo
+    if selected_camp is not None and "start_date" in selected_camp:
+        try:
+            c_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
+            c_end = c_start + pd.Timedelta(days=6)
+            for _, mr in matches_df.iterrows():
+                m_dt = pd.to_datetime(str(mr.get("date_str") or mr.get("date"))[:10], errors="coerce")
+                if not pd.isna(m_dt) and c_start <= m_dt <= c_end:
+                    target_match_row = mr
+                    break
+        except Exception:
+            pass
+
+    # 2. Se non presente nel raduno, cerca la prossima partita in programma (data >= oggi)
+    if target_match_row is None and not matches_df.empty:
+        matches_df_sorted = matches_df.sort_values("date_str")
+        upcoming = matches_df_sorted[matches_df_sorted["date_str"] >= today_str]
+        if not upcoming.empty:
+            target_match_row = upcoming.iloc[0]
+        else:
+            target_match_row = matches_df.sort_values("date_str", ascending=False).iloc[0]
+
+    if target_match_row is not None:
+        target_match = str(target_match_row.get("match_name") or "ITALIA - ARGENTINA")
+        target_comp = str(target_match_row.get("competition") or "Autumn Nations Series 2026")
+        target_date = str(target_match_row.get("date_str") or target_match_row.get("date") or "2026-11-14")[:10]
+    else:
+        target_match = "ITALIA - ARGENTINA"
+        target_comp = "Autumn Nations Series 2026"
+        target_date = "2026-11-14"
 
     # Lineup details
     lineup_detail = utils.get_match_lineup_detail(target_date)
@@ -232,19 +299,53 @@ def render_dashboard_home(t: dict):
     finishers = lineup_detail.get("finishers", pd.DataFrame())
     n_lineup = len(starters) + len(finishers)
 
+    # Formattazione data italiana e calcolo giorni mancanti
+    try:
+        m_dt_obj = pd.to_datetime(target_date)
+        giorni_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+        mesi_it = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
+        date_disp_it = f"{giorni_it[m_dt_obj.weekday()]} {m_dt_obj.day} {mesi_it[m_dt_obj.month - 1]} {m_dt_obj.year}"
+        days_diff = (m_dt_obj - today_dt).days
+        if days_diff > 1:
+            countdown_badge = f"<span style='background:#FEF3C7; color:#92400E; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px;'>⏳ Mancano {days_diff} giorni al Kick-Off</span>"
+        elif days_diff == 1:
+            countdown_badge = "<span style='background:#FEF3C7; color:#92400E; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px;'>⏳ Domani al Kick-Off</span>"
+        elif days_diff == 0:
+            countdown_badge = "<span style='background:#DC2626; color:#FFFFFF; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px;'>🏉 MATCH DAY OGGI</span>"
+        else:
+            countdown_badge = "<span style='background:#E2E8F0; color:#475569; font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:4px;'>Gara già disputata</span>"
+    except Exception:
+        date_disp_it = target_date
+        countdown_badge = ""
+
     with m_col1:
+        if n_lineup > 0:
+            lineup_sub = f"Formazione Ufficiale: <b>{n_lineup}/23 Atleti Assegnati</b>"
+            lineup_badges = f"""
+                <span style="background:#ECFDF5; color:#065F46; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">{len(starters)} Titolari (1–15)</span>
+                <span style="background:#EFF6FF; color:#1E40AF; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">{len(finishers)} Finishers (16–23)</span>
+            """
+        else:
+            lineup_sub = "Formazione: <b>In fase di definizione dallo Staff Tecnico (1-23)</b>"
+            lineup_badges = """
+                <span style="background:#FEF3C7; color:#92400E; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">15 Titolari da definire</span>
+                <span style="background:#F1F5F9; color:#475569; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">8 Finishers da definire</span>
+            """
+
         st.markdown(
             f"""
             <div style="background:#FFFFFF; border:2px solid #002B49; border-radius:14px; padding:16px; box-shadow:0 4px 14px rgba(0,43,73,0.12);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <span style="font-size:0.72rem; font-weight:800; color:#D4AF37; text-transform:uppercase; letter-spacing:0.08em;">PARTITA INTERNAZIONALE IN PROGRAMMA</span>
-                    <span style="background:#0284C7; color:#FFFFFF; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px;">{target_comp}</span>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.72rem; font-weight:800; color:#D4AF37; text-transform:uppercase; letter-spacing:0.08em;">PARTITA INTERNAZIONALE IN PROGRAMMA</span>
+                        <span style="background:#0284C7; color:#FFFFFF; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:4px;">{target_comp}</span>
+                    </div>
+                    {countdown_badge}
                 </div>
                 <div style="font-size:1.5rem; font-weight:900; color:#002B49; margin-bottom:4px;">{target_match}</div>
-                <div style="font-size:0.80rem; color:#475569; margin-bottom:12px;">Data Gara: <b>{target_date}</b> &bull; Formazione: <b>{n_lineup}/23 Atleti Ufficiali Assegnati</b></div>
-                <div style="display:flex; gap:10px;">
-                    <span style="background:#ECFDF5; color:#065F46; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">{len(starters)} Titolari (1–15)</span>
-                    <span style="background:#EFF6FF; color:#1E40AF; font-size:0.75rem; font-weight:700; padding:3px 10px; border-radius:6px;">{len(finishers)} Finishers (16–23)</span>
+                <div style="font-size:0.80rem; color:#475569; margin-bottom:12px;">Data Gara: <b>{date_disp_it}</b> &bull; {lineup_sub}</div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    {lineup_badges}
                 </div>
             </div>
             """,
@@ -257,13 +358,17 @@ def render_dashboard_home(t: dict):
             <div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:14px; padding:16px; height:100%; display:flex; flex-direction:column; justify-content:space-between;">
                 <div>
                     <div style="font-size:0.72rem; font-weight:800; color:#0F172A; text-transform:uppercase; margin-bottom:6px;">Accesso Rapido Formazione</div>
-                    <div style="font-size:0.78rem; color:#64748B;">Visualizza lo schieramento tattico in campo con foto ufficiali e minutaggi della partita.</div>
+                    <div style="font-size:0.78rem; color:#64748B;">Visualizza o assegna lo schieramento tattico in campo 1–23 per la gara contro {target_match}.</div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
         if st.button("📋 Vai allo Schieramento Campo (1-23)", use_container_width=True, type="primary", key="btn_home_to_lineup"):
+            st.session_state["global_selected_match_date"] = target_date
+            st.session_state["global_selected_match_name"] = target_match
+            st.session_state["global_selected_match_comp"] = target_comp
+            st.session_state["global_selected_match_label"] = f"{target_date} • {target_match} ({target_comp})"
             st.session_state["active_page"] = "analisi_sessione_giornata"
             st.session_state["active_subtab_analisi_sessione_giornata"] = "campo"
             st.session_state["_scroll_top_counter"] = st.session_state.get("_scroll_top_counter", 0) + 1
@@ -276,35 +381,54 @@ def render_dashboard_home(t: dict):
     # --------------------------------------------------------------------------
     if not sub_week.empty:
         st.markdown("### 4. Progressione Carichi della Settimana (Nazionale Italiana)")
-        # Raggruppamento per data/seduta
-        week_grp = sub_week.groupby("date_str", as_index=False).agg(
-            distanza_tot=("distance_m", "sum"),
-            hml_tot=("mp_25_35", "sum"),
-            atleti_count=("player_name", "nunique"),
-        )
-        week_grp = week_grp.sort_values("date_str")
+        sub_week_clean = sub_week.copy()
+        sub_week_clean["distance_m_num"] = pd.to_numeric(sub_week_clean.get("distance_m", 0), errors="coerce").fillna(0.0)
+        sub_week_clean["mp_25_num"] = pd.to_numeric(sub_week_clean.get("mp_25_35", 0), errors="coerce").fillna(0.0)
+        sub_week_clean["clean_date"] = sub_week_clean["date_str"].astype(str).str[:10]
 
-        fig_w = go.Figure()
-        fig_w.add_trace(
-            go.Bar(
-                x=week_grp["date_str"],
-                y=week_grp["distanza_tot"],
-                name="Volume Totale Squadra (m)",
-                marker_color="#0066B2",
-                opacity=0.90,
-                hovertemplate="<b>%{x}</b><br>Volume: %{y:,.0f} m<extra></extra>",
+        week_grp = sub_week_clean.groupby("clean_date", as_index=False).agg(
+            distanza_tot=("distance_m_num", "sum"),
+            hml_tot=("mp_25_num", "sum"),
+            atleti_count=("player_name", "nunique"),
+        ).sort_values("clean_date")
+
+        # Verifica se ci sono dati con volume > 0
+        if not week_grp.empty and (week_grp["distanza_tot"] > 0).any():
+            def _fmt_day(d_s):
+                try:
+                    dt = pd.to_datetime(d_s)
+                    giorni = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
+                    return f"{dt.strftime('%d/%m')} ({giorni[dt.weekday()]})"
+                except Exception:
+                    return str(d_s)
+
+            week_grp["date_label"] = week_grp["clean_date"].apply(_fmt_day)
+
+            fig_w = go.Figure()
+            fig_w.add_trace(
+                go.Bar(
+                    x=week_grp["date_label"],
+                    y=week_grp["distanza_tot"],
+                    name="Volume Totale Squadra (m)",
+                    marker_color="#0066B2",
+                    opacity=0.90,
+                    hovertemplate="<b>%{x}</b><br>Volume: %{y:,.0f} m<extra></extra>",
+                )
             )
-        )
-        fig_w.update_layout(
-            height=260,
-            margin=dict(l=40, r=30, t=20, b=40),
-            plot_bgcolor="#F8FAFC",
-            paper_bgcolor="#FFFFFF",
-            font=dict(family="Inter", size=11),
-            yaxis=dict(title="Metri Percorsi (Squadra)", gridcolor="#E2E8F0"),
-            xaxis=dict(gridcolor="#E2E8F0"),
-        )
-        st.plotly_chart(fig_w, use_container_width=True)
+            fig_w.update_layout(
+                height=260,
+                margin=dict(l=40, r=30, t=20, b=40),
+                plot_bgcolor="#F8FAFC",
+                paper_bgcolor="#FFFFFF",
+                font=dict(family="Inter", size=11),
+                yaxis=dict(title="Metri Percorsi (Squadra)", gridcolor="#E2E8F0"),
+                xaxis=dict(type="category", title="Data Seduta", gridcolor="#E2E8F0"),
+            )
+            st.plotly_chart(fig_w, use_container_width=True)
+        else:
+            st.info(f"ℹ️ Nessun volume GPS registrato per le sedute della settimana ({week_range}).")
+    else:
+        st.info(f"ℹ️ Nessun dato GPS archiviato per la settimana selezionata ({week_range}).")
 
     # --------------------------------------------------------------------------
     # SEZIONE 5: HUB DI NAVIGAZIONE RAPIDA
