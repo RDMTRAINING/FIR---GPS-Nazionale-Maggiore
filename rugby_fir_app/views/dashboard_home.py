@@ -1,6 +1,7 @@
 import datetime
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from config import render_page_header, RUGBY_ROLES, ROLE_TO_DEPT
 import utils
@@ -9,7 +10,7 @@ import global_state
 
 def _safe_int(v, default=0) -> int:
     try:
-        if v is None or pd.isna(v) or np.isnan(v):
+        if v is None or pd.isna(v):
             return default
         return int(round(float(v)))
     except Exception:
@@ -18,7 +19,7 @@ def _safe_int(v, default=0) -> int:
 
 def _safe_float(v, default=0.0) -> float:
     try:
-        if v is None or pd.isna(v) or np.isnan(v):
+        if v is None or pd.isna(v):
             return default
         return float(v)
     except Exception:
