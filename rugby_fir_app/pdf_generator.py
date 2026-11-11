@@ -199,11 +199,15 @@ def _build_individual_rl_table(df_data: pd.DataFrame, neutral_mode: bool = False
         def _as_int(v):
             return str(int(round(float(pd.to_numeric(v, errors="coerce") or 0))))
 
+        t_val = float(pd.to_numeric(r.get("Tempo", r.get("duration", 0)), errors="coerce") or 0)
+        d_val = float(pd.to_numeric(r.get("Distanza", r.get("distance_m", 0)), errors="coerce") or 0)
+        mmin_val = (d_val / t_val) if t_val > 0 else float(pd.to_numeric(r.get("m_min", r.get("m_per_min", 0)), errors="coerce") or 0)
+
         data_rows.append([
             str(r.get("player_name", "-")),
-            _as_int(r.get("Tempo", r.get("duration", 0))),
-            _as_int(r.get("Distanza", r.get("distance_m", 0))),
-            _as_int(r.get("m_min", r.get("m_per_min", 0))),
+            _as_int(t_val),
+            _as_int(d_val),
+            _as_int(mmin_val),
             _as_int(r.get("Run_Dist", r.get("run_dist", 0))),
             _as_int(r.get("Hml_25", r.get("hml_25", 0))),
             _as_int(r.get("Hml_40", r.get("vhml_40", 0))),

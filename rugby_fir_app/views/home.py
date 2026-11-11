@@ -149,14 +149,12 @@ def _prepare_session_camp_dataframe(
     gps["vhsr_25"] = gps["speed_25_72"]
 
     if not gps.empty:
-        mmin_agg_fn = "sum" if sum_m_per_min else "mean"
         gps_agg = (
             gps.groupby("player_name", as_index=False)
             .agg(
                 role_gps=("role", "first"),
                 duration=("duration", lambda s: np.round(s).sum()),
                 distance_m=("distance_m", lambda s: np.round(s).sum()),
-                m_per_min=("m_per_min", lambda s: np.round(s).sum() if sum_m_per_min else np.round(s.mean())),
                 run_dist=("run_dist_calc", lambda s: np.round(s).sum()),
                 hml_25=("hml_25", lambda s: np.round(s).sum()),
                 hml_40=("hml_40", lambda s: np.round(s).sum()),
@@ -168,6 +166,12 @@ def _prepare_session_camp_dataframe(
                 v_max=("v_max", "max"),
                 v_max_pct=("v_max_pct", "max"),
             )
+        )
+        # Metri al minuto: calcolati tassativamente dividendo distanza totale per durata (mai sommando le tracce)
+        gps_agg["m_per_min"] = np.where(
+            gps_agg["duration"] > 0,
+            np.round(gps_agg["distance_m"] / gps_agg["duration"]),
+            0.0,
         )
     else:
         gps_agg = pd.DataFrame(columns=[
@@ -249,7 +253,8 @@ def _prepare_session_camp_dataframe(
         if g_row is not None and float(g_row.get("duration", 0)) > 0:
             dur = int(round(float(g_row["duration"])))
             dist = int(round(float(g_row["distance_m"])))
-            m_min_raw = float(g_row["m_per_min"]) if float(g_row["m_per_min"]) > 0 else (dist / dur if dur > 0 else 0.0)
+            # Calcolo m\min: sempre Distanza Totale diviso Tempo (evita somme anomale multi-traccia)
+            m_min_raw = (dist / dur) if dur > 0 else 0.0
             m_min = int(round(m_min_raw))
             r_dist = int(round(float(g_row["run_dist"])))
             h25 = int(round(float(g_row["hml_25"])))
