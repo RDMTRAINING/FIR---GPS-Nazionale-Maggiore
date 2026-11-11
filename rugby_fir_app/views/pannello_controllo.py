@@ -661,8 +661,15 @@ def _fragment_raduni_create_clone(camps_df: pd.DataFrame):
                     st.rerun()
 
 
-@st.fragment
 def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
+    # Ricarica sempre freschi dal database per evitare disallineamenti di cache o frammenti
+    camps_df = utils.get_camps_df()
+    players_df = utils.get_players_df()
+
+    if "camp_flash_msg" in st.session_state:
+        msg = st.session_state.pop("camp_flash_msg")
+        st.success(msg)
+
     # Filters
     fc1, fc2, fc3 = st.columns([1.3, 1.3, 2.4])
     comps_avail = ["Tutte le Competizioni"] + sorted([str(c) for c in camps_df["competition"].dropna().unique() if str(c).strip()])
@@ -714,6 +721,7 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
     with h_col2:
         if st.button("Elimina Raduno", key=f"del_camp_{active_cid}", use_container_width=True):
             utils.delete_camp(active_cid)
+            st.session_state["camp_flash_msg"] = "Raduno eliminato con successo."
             st.rerun()
 
     # Two columns: Avanti vs Trequarti
@@ -730,6 +738,9 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
             add_fw_id = a1.selectbox("Aggiungi Avanti", fw_opts, format_func=lambda x: fw_map.get(x, str(x)), label_visibility="collapsed", key="sel_add_fw")
             if a2.button("+ Aggiungi", key="btn_add_fw", use_container_width=True, type="primary"):
                 utils.add_player_to_camp(active_cid, add_fw_id)
+                p_name_add = fw_map.get(int(add_fw_id), "Giocatore")
+                st.session_state.pop("sel_add_fw", None)
+                st.session_state["camp_flash_msg"] = f"✅ {p_name_add} aggiunto con successo al raduno!"
                 st.rerun()
         if not fw_df.empty:
             st.dataframe(
@@ -743,6 +754,8 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
             rem_fw_id = r1.selectbox("Rimuovi Avanti", rem_fw_opts, format_func=lambda x: rem_fw_map.get(x, str(x)), label_visibility="collapsed", key="sel_rem_fw")
             if r2.button("Rimuovi", key="btn_rem_fw", use_container_width=True):
                 utils.remove_player_from_camp(rem_fw_id, active_cid)
+                st.session_state.pop("sel_rem_fw", None)
+                st.session_state["camp_flash_msg"] = "🗑️ Giocatore rimosso con successo dal raduno."
                 st.rerun()
 
     with col_tq:
@@ -755,6 +768,9 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
             add_bk_id = b1.selectbox("Aggiungi Trequarti", bk_opts, format_func=lambda x: bk_map.get(x, str(x)), label_visibility="collapsed", key="sel_add_bk")
             if b2.button("+ Aggiungi", key="btn_add_bk", use_container_width=True, type="primary"):
                 utils.add_player_to_camp(active_cid, add_bk_id)
+                p_name_add = bk_map.get(int(add_bk_id), "Giocatore")
+                st.session_state.pop("sel_add_bk", None)
+                st.session_state["camp_flash_msg"] = f"✅ {p_name_add} aggiunto con successo al raduno!"
                 st.rerun()
         if not bk_df.empty:
             st.dataframe(
@@ -768,6 +784,8 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
             rem_bk_id = rb1.selectbox("Rimuovi Trequarti", rem_bk_opts, format_func=lambda x: rem_bk_map.get(x, str(x)), label_visibility="collapsed", key="sel_rem_bk")
             if rb2.button("Rimuovi", key="btn_rem_bk", use_container_width=True):
                 utils.remove_player_from_camp(rem_bk_id, active_cid)
+                st.session_state.pop("sel_rem_bk", None)
+                st.session_state["camp_flash_msg"] = "🗑️ Giocatore rimosso con successo dal raduno."
                 st.rerun()
 
 

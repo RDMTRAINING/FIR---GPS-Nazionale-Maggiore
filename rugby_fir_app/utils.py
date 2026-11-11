@@ -855,6 +855,8 @@ def delete_camp(camp_id: int):
 
 
 def add_player_to_camp(camp_id: int, player_id: int):
+    camp_id = int(camp_id)
+    player_id = int(player_id)
     cp_df = load_table("camp_players")
     players_df = get_players_df()
     p_row = players_df[players_df["id"] == player_id]
@@ -877,14 +879,24 @@ def add_player_to_camp(camp_id: int, player_id: int):
     cp_df = pd.concat([cp_df, pd.DataFrame([new_row])], ignore_index=True)
     save_table("camp_players", cp_df)
     _recalc_camp_counts(camp_id)
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 
 def remove_player_from_camp(entry_id: int, camp_id: int):
+    entry_id = int(entry_id)
+    camp_id = int(camp_id)
     cp_df = load_table("camp_players")
     if not cp_df.empty:
         cp_df = cp_df[~((cp_df["id"] == entry_id) & (cp_df["camp_id"] == camp_id))].copy()
         save_table("camp_players", cp_df)
         _recalc_camp_counts(camp_id)
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
 
 
 # ==============================================================================
