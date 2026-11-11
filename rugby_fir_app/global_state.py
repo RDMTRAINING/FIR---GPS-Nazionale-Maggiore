@@ -10,40 +10,98 @@ def init_global_state(hist_df: pd.DataFrame = None):
     if hist_df is None or hist_df.empty:
         hist_df = utils.get_gps_history_df("nazionale")
 
-    if hist_df.empty:
-        return
+    camps_df = utils.get_camps_df()
 
-    # 1. Trova la sessione di default: l'ultima seduta FIR caricata con dati
-    if "global_selected_session_name" not in st.session_state or not st.session_state["global_selected_session_name"]:
-        sessions_summary = (
-            hist_df.groupby(["date_str", "session_name"], as_index=False)
-            .agg(atleti=("player_name", "nunique"), righe=("id", "count"))
-            .sort_values(["date_str", "righe"], ascending=[False, False])
-            .reset_index(drop=True)
-        )
-        def_row = sessions_summary.iloc[0] if not sessions_summary.empty else None
+    # 1. Trova il raduno di default: settimana di calendario attuale (modificabile)
+    if "global_camp_label" not in st.session_state or not st.session_state["global_camp_label"]:
+        if not camps_df.empty:
+            camps_sorted = camps_df.sort_values("start_date", ascending=False).reset_index(drop=True)
+            today = pd.Timestamp.now().normalize()
+            def_camp = None
+            for _, cr in camps_sorted.iterrows():
+                s_dt = str(cr.get("start_date") or cr.get("start_date_str") or "")[:10]
+                c_start = pd.to_datetime(s_dt, errors="coerce")
+                if not pd.isna(c_start):
+                    c_end = c_start + pd.Timedelta(days=6)
+                    if c_start <= today <= c_end:
+                        def_camp = cr
+                        break
+            if def_camp is None:
+                past = camps_sorted[pd.to_datetime(camps_sorted["start_date"], errors="coerce") <= today]
+                if not past.empty:
+                    def_camp = past.iloc[0]
+                else:
+                    def_camp = camps_sorted.iloc[0]
 
-        if def_row is not None:
-            st.session_state["global_selected_date"] = str(def_row["date_str"])
-            st.session_state["global_selected_session_name"] = str(def_row["session_name"])
-            st.session_state["global_selected_session_key"] = f"{def_row['date_str']} • {def_row['session_name']}"
+            if def_camp is not None:
+                s_dt = str(def_camp.get("start_date") or "")[:10]
+                w_nm = str(def_camp.get("week_name") or "Raduno")
+                lbl = f"{s_dt} • {w_nm}"
+                st.session_state["global_camp_label"] = lbl
+                st.session_state["global_selected_camp_obj"] = def_camp.to_dict()
+                st.session_state["_prev_sb_global_sel_camp"] = lbl
 
-            # Assegna automaticamente la tipologia della sessione scelta
-            cur_type = utils.get_session_assigned_type(str(def_row["date_str"]), str(def_row["session_name"]))
-            st.session_state["global_selected_type"] = cur_type
+    # 2. Trova la sessione di default per il raduno attivo
+    if "global_selected_session_name" not in st.session_state or st.session_state["global_selected_session_name"] is None:
+        sel_camp_obj = st.session_state.get("global_selected_camp_obj")
+        filtered_df = hist_df
+        if sel_camp_obj is not None and hist_df is not None and not hist_df.empty:
+            try:
+                c_start = pd.to_datetime(str(sel_camp_obj["start_date"])[:10])
+                c_end = c_start + pd.Timedelta(days=6)
+                s_dts = pd.to_datetime(hist_df["date_str"], errors="coerce")
+                filtered_df = hist_df[(s_dts >= c_start) & (s_dts <= c_end)]
+            except Exception:
+                filtered_df = pd.DataFrame()
 
-    # 2. Inizializza il Match per il Trombinoscopio Match: l'ultima gara con dati
+        if filtered_df is not None and not filtered_df.empty:
+            sessions_summary = (
+                filtered_df.groupby(["date_str", "session_name"], as_index=False)
+                .agg(atleti=("player_name", "nunique"), righe=("id", "count"))
+                .sort_values(["date_str", "righe"], ascending=[False, False])
+                .reset_index(drop=True)
+            )
+            def_row = sessions_summary.iloc[0] if not sessions_summary.empty else None
+            if def_row is not None:
+                st.session_state["global_selected_date"] = str(def_row["date_str"])
+                st.session_state["global_selected_session_name"] = str(def_row["session_name"])
+                st.session_state["global_selected_session_key"] = f"{def_row['date_str']} • {def_row['session_name']}"
+                st.session_state["global_selected_type"] = utils.get_session_assigned_type(str(def_row["date_str"]), str(def_row["session_name"]))
+            else:
+                st.session_state["global_selected_date"] = ""
+                st.session_state["global_selected_session_name"] = ""
+                st.session_state["global_selected_session_key"] = ""
+                st.session_state["global_selected_type"] = "Allenamento"
+        else:
+            st.session_state["global_selected_date"] = ""
+            st.session_state["global_selected_session_name"] = ""
+            st.session_state["global_selected_session_key"] = ""
+            st.session_state["global_selected_type"] = "Allenamento"
+
+    # 3. Inizializza il Match per il Trombinoscopio Match: preferibilmente il match del raduno o l'ultima gara con dati
     if "global_selected_match_label" not in st.session_state or not st.session_state["global_selected_match_label"]:
         lineup_summary = utils.get_lineup_matches_summary()
         if not lineup_summary.empty:
-            hist_dates_set = set(hist_df["date_str"].dropna().astype(str).str[:10].unique()) if hist_df is not None and not hist_df.empty else set()
+            sel_camp_obj = st.session_state.get("global_selected_camp_obj")
             latest_m = None
-            # Cerca la prima gara recente che ha riscontro nei dati GPS FIR
-            for _, r in lineup_summary.iterrows():
-                if str(r["date_str"])[:10] in hist_dates_set:
-                    latest_m = r
-                    break
-            # In subordine, la prima con formazione definita (starters > 0)
+            if sel_camp_obj is not None:
+                try:
+                    c_start = pd.to_datetime(str(sel_camp_obj["start_date"])[:10])
+                    c_end = c_start + pd.Timedelta(days=6)
+                    for _, r in lineup_summary.iterrows():
+                        m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
+                        if not pd.isna(m_d) and c_start <= m_d <= c_end:
+                            latest_m = r
+                            break
+                except Exception:
+                    pass
+
+            if latest_m is None and hist_df is not None and not hist_df.empty:
+                hist_dates_set = set(hist_df["date_str"].dropna().astype(str).str[:10].unique())
+                for _, r in lineup_summary.iterrows():
+                    if str(r["date_str"])[:10] in hist_dates_set:
+                        latest_m = r
+                        break
             if latest_m is None:
                 for _, r in lineup_summary.iterrows():
                     if int(r.get("starters_count", 0)) > 0:
@@ -97,14 +155,14 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         unsafe_allow_html=True,
     )
 
-    # 1. Selezione Raduno: default sull'ultima settimana con dati GPS
+    # 1. Selezione Raduno: default su settimana attuale di calendario (modificabile)
     camp_options = ["Tutte le Settimane (Senza filtro Raduno)"]
     camp_lookup = {}
     default_camp_idx = 0
     if not camps_df.empty:
         camps_sorted = camps_df.sort_values("start_date", ascending=False).reset_index(drop=True)
-        hist_dates = pd.to_datetime(hist_df["date_str"].dropna().unique(), errors="coerce") if not hist_df.empty else pd.Series(dtype="datetime64[ns]")
-        found_data_camp = False
+        today = pd.Timestamp.now().normalize()
+        current_camp_found = False
 
         for idx_c, cr in camps_sorted.iterrows():
             s_dt = str(cr.get("start_date") or cr.get("start_date_str") or "")[:10]
@@ -113,34 +171,60 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
             camp_options.append(lbl)
             camp_lookup[lbl] = cr.to_dict()
 
-            if not found_data_camp and not hist_dates.empty:
+            if not current_camp_found:
                 c_start = pd.to_datetime(s_dt, errors="coerce")
                 if not pd.isna(c_start):
                     c_end = c_start + pd.Timedelta(days=6)
-                    if ((hist_dates >= c_start) & (hist_dates <= c_end)).any():
+                    if c_start <= today <= c_end:
                         default_camp_idx = idx_c + 1
-                        found_data_camp = True
+                        current_camp_found = True
+
+        # Se oggi non rientra esattamente in nessun raduno, trova il raduno <= oggi o il primo disponibile
+        if not current_camp_found:
+            for idx_c, cr in camps_sorted.iterrows():
+                s_dt = str(cr.get("start_date") or cr.get("start_date_str") or "")[:10]
+                c_start = pd.to_datetime(s_dt, errors="coerce")
+                if not pd.isna(c_start) and c_start <= today:
+                    default_camp_idx = idx_c + 1
+                    current_camp_found = True
+                    break
+        if not current_camp_found and len(camp_options) > 1:
+            default_camp_idx = 1
 
     cur_camp_lbl = st.session_state.get("global_camp_label", camp_options[default_camp_idx] if default_camp_idx < len(camp_options) else camp_options[0])
     if cur_camp_lbl not in camp_options:
         cur_camp_lbl = camp_options[default_camp_idx] if default_camp_idx < len(camp_options) else camp_options[0]
+
     sel_camp = st.selectbox(
         "Settimana Raduno FIR:",
         camp_options,
         index=camp_options.index(cur_camp_lbl) if cur_camp_lbl in camp_options else 0,
         key="sb_global_sel_camp",
     )
+
+    # Rilevamento cambio raduno: sincronizza e azzera le selezioni della seduta
+    prev_camp = st.session_state.get("_prev_sb_global_sel_camp")
+    camp_changed = (prev_camp is not None and prev_camp != sel_camp)
+    if camp_changed:
+        st.session_state.pop("global_selected_session_key", None)
+        st.session_state.pop("global_selected_date", None)
+        st.session_state.pop("global_selected_session_name", None)
+        st.session_state.pop("sb_global_sel_sess", None)
+    st.session_state["_prev_sb_global_sel_camp"] = sel_camp
     st.session_state["global_camp_label"] = sel_camp
     selected_camp_obj = camp_lookup.get(sel_camp)
     st.session_state["global_selected_camp_obj"] = selected_camp_obj
 
-    # 2. Elenco Sessioni (filtrate per raduno se selezionato)
-    sessions_summary = (
-        hist_df.groupby(["date_str", "session_name"], as_index=False)
-        .agg(atleti=("player_name", "nunique"), righe=("id", "count"))
-        .sort_values(["date_str", "righe"], ascending=[False, False])
-        .reset_index(drop=True)
-    )
+    # 2. Elenco Sessioni (filtrate rigorosamente per raduno se selezionato)
+    if not hist_df.empty:
+        sessions_summary = (
+            hist_df.groupby(["date_str", "session_name"], as_index=False)
+            .agg(atleti=("player_name", "nunique"), righe=("id", "count"))
+            .sort_values(["date_str", "righe"], ascending=[False, False])
+            .reset_index(drop=True)
+        )
+    else:
+        sessions_summary = pd.DataFrame(columns=["date_str", "session_name", "atleti", "righe"])
 
     if selected_camp_obj is not None:
         try:
@@ -148,10 +232,8 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
             c_end = c_start + pd.Timedelta(days=6)
             s_dts = pd.to_datetime(sessions_summary["date_str"], errors="coerce")
             filtered_sessions = sessions_summary[(s_dts >= c_start) & (s_dts <= c_end)].copy()
-            if filtered_sessions.empty:
-                filtered_sessions = sessions_summary
         except Exception:
-            filtered_sessions = sessions_summary
+            filtered_sessions = pd.DataFrame(columns=sessions_summary.columns)
     else:
         filtered_sessions = sessions_summary
 
@@ -159,48 +241,60 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
     sess_lookup = {f"{r['date_str']} • {r['session_name']}": (str(r["date_str"]), str(r["session_name"])) for _, r in filtered_sessions.iterrows()}
 
     if not sess_labels:
-        st.warning("Nessuna sessione trovata per questo filtro.")
-        return
+        st.selectbox(
+            "Seduta GPS da Analizzare:",
+            ["Nessuna seduta registrata in questa settimana"],
+            disabled=True,
+            key=f"sb_global_sel_sess_empty_{sel_camp}",
+        )
+        st.caption("ℹ️ Nessun dato GPS caricato per il raduno selezionato.")
+        st.session_state["global_selected_session_key"] = ""
+        st.session_state["global_selected_date"] = ""
+        st.session_state["global_selected_session_name"] = ""
+        st.session_state["global_selected_type"] = "Allenamento"
+        sel_date_str = ""
+        sel_sess_name = ""
+    else:
+        cur_sess_key = st.session_state.get("global_selected_session_key")
+        default_sess_idx = sess_labels.index(cur_sess_key) if (cur_sess_key and cur_sess_key in sess_labels) else 0
 
-    cur_sess_key = st.session_state.get("global_selected_session_key", sess_labels[0])
-    default_sess_idx = sess_labels.index(cur_sess_key) if cur_sess_key in sess_labels else 0
+        sel_sess_lbl = st.selectbox(
+            "Seduta GPS da Analizzare:",
+            sess_labels,
+            index=default_sess_idx,
+            key="sb_global_sel_sess",
+        )
 
-    sel_sess_lbl = st.selectbox(
-        "Seduta GPS da Analizzare:",
-        sess_labels,
-        index=default_sess_idx,
-        key="sb_global_sel_sess",
-    )
+        sel_date_str, sel_sess_name = sess_lookup[sel_sess_lbl]
+        st.session_state["global_selected_session_key"] = sel_sess_lbl
+        st.session_state["global_selected_date"] = sel_date_str
+        st.session_state["global_selected_session_name"] = sel_sess_name
 
-    sel_date_str, sel_sess_name = sess_lookup[sel_sess_lbl]
-    st.session_state["global_selected_session_key"] = sel_sess_lbl
-    st.session_state["global_selected_date"] = sel_date_str
-    st.session_state["global_selected_session_name"] = sel_sess_name
+        # 3. Tipologia della sessione scelta: LEGATA AUTOMATICAMENTE E MODIFICABILE CON SELECTBOX DIRETTA
+        cur_type = utils.get_session_assigned_type(sel_date_str, sel_sess_name)
+        t_idx = utils.FIR_SESSION_TYPOLOGIES.index(cur_type) if cur_type in utils.FIR_SESSION_TYPOLOGIES else 0
 
-    # 3. Tipologia della sessione scelta: LEGATA AUTOMATICAMENTE E MODIFICABILE CON SELECTBOX DIRETTA
-    cur_type = utils.get_session_assigned_type(sel_date_str, sel_sess_name)
-    t_idx = utils.FIR_SESSION_TYPOLOGIES.index(cur_type) if cur_type in utils.FIR_SESSION_TYPOLOGIES else 0
+        st.markdown(
+            "<div style='margin-top:6px; margin-bottom:2px; font-size:0.70rem; font-weight:800; text-transform:uppercase; color:#D4AF37;'>⚡ TIPOLOGIA BENCHMARK FIR:</div>",
+            unsafe_allow_html=True,
+        )
+        sel_type = st.selectbox(
+            "Tipologia Benchmark Seduta:",
+            utils.FIR_SESSION_TYPOLOGIES,
+            index=t_idx,
+            key=f"sb_global_type_sel_{sel_date_str}_{sel_sess_name}",
+            label_visibility="collapsed",
+        )
+        if sel_type != cur_type:
+            types_map[f"{sel_date_str}_{sel_sess_name}"] = sel_type
+            utils.save_fir_session_types(types_map)
+            st.session_state["global_selected_type"] = sel_type
+            st.rerun()
 
-    st.markdown(
-        "<div style='margin-top:6px; margin-bottom:2px; font-size:0.70rem; font-weight:800; text-transform:uppercase; color:#D4AF37;'>⚡ TIPOLOGIA BENCHMARK FIR:</div>",
-        unsafe_allow_html=True,
-    )
-    sel_type = st.selectbox(
-        "Tipologia Benchmark Seduta:",
-        utils.FIR_SESSION_TYPOLOGIES,
-        index=t_idx,
-        key=f"sb_global_type_sel_{sel_date_str}_{sel_sess_name}",
-        label_visibility="collapsed",
-    )
-    if sel_type != cur_type:
-        types_map[f"{sel_date_str}_{sel_sess_name}"] = sel_type
-        utils.save_fir_session_types(types_map)
         st.session_state["global_selected_type"] = sel_type
-        st.rerun()
 
-    st.session_state["global_selected_type"] = sel_type
-
-    # 4. Selezione Match per il Trombinoscopio Match (1-23): default sull'ultima gara con dati
+    # 4. Selezione Match per il Trombinoscopio Match (1-23):
+    # Se il raduno ha un match specifico nella settimana, prioritizzalo come default
     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
     lineup_summary = utils.get_lineup_matches_summary()
     if not lineup_summary.empty:
@@ -211,12 +305,26 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
             for _, r in lineup_summary.iterrows()
         }
 
+        camp_match_lbl = None
+        if selected_camp_obj is not None:
+            try:
+                c_start = pd.to_datetime(str(selected_camp_obj["start_date"])[:10])
+                c_end = c_start + pd.Timedelta(days=6)
+                for r_lbl, (r_dt, _, _) in m_lookup.items():
+                    m_d = pd.to_datetime(r_dt[:10], errors="coerce")
+                    if not pd.isna(m_d) and c_start <= m_d <= c_end:
+                        camp_match_lbl = r_lbl
+                        break
+            except Exception:
+                pass
+
         hist_dates_set = set(hist_df["date_str"].dropna().astype(str).str[:10].unique()) if hist_df is not None and not hist_df.empty else set()
-        default_m_lbl = None
-        for r_lbl, (r_dt, _, _) in m_lookup.items():
-            if r_dt[:10] in hist_dates_set:
-                default_m_lbl = r_lbl
-                break
+        default_m_lbl = camp_match_lbl
+        if default_m_lbl is None:
+            for r_lbl, (r_dt, _, _) in m_lookup.items():
+                if r_dt[:10] in hist_dates_set:
+                    default_m_lbl = r_lbl
+                    break
         if default_m_lbl is None:
             for _, r in lineup_summary.iterrows():
                 if int(r.get("starters_count", 0)) > 0:
@@ -224,6 +332,9 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
                     break
         if default_m_lbl is None:
             default_m_lbl = m_labels[0]
+
+        if camp_changed and camp_match_lbl:
+            st.session_state["global_selected_match_label"] = camp_match_lbl
 
         cur_m_lbl = st.session_state.get("global_selected_match_label", default_m_lbl)
         if cur_m_lbl not in m_labels:
@@ -266,8 +377,12 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
     fallback_dt = str(sessions_summary.iloc[0]["date_str"]) if not sessions_summary.empty else ""
     fallback_nm = str(sessions_summary.iloc[0]["session_name"]) if not sessions_summary.empty else ""
 
-    sel_date_str = st.session_state.get("global_selected_date", fallback_dt)
-    sel_sess_name = st.session_state.get("global_selected_session_name", fallback_nm)
+    sel_date_str = st.session_state.get("global_selected_date")
+    if sel_date_str is None:
+        sel_date_str = fallback_dt
+    sel_sess_name = st.session_state.get("global_selected_session_name")
+    if sel_sess_name is None:
+        sel_sess_name = fallback_nm
     cur_type = st.session_state.get("global_selected_type") or utils.get_session_assigned_type(sel_date_str, sel_sess_name)
     selected_camp = st.session_state.get("global_selected_camp_obj")
 
@@ -279,20 +394,29 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         camp_players = pd.DataFrame()
 
     # 1. Filtro rigoroso: solo ed esclusivamente la seduta selezionata
-    sub_gps_sess = hist_df[
-        (hist_df["date_str"] == sel_date_str) &
-        (hist_df["session_name"] == sel_sess_name)
-    ].copy()
+    if sel_date_str and sel_sess_name:
+        sub_gps_sess = hist_df[
+            (hist_df["date_str"] == sel_date_str) &
+            (hist_df["session_name"] == sel_sess_name)
+        ].copy()
+    else:
+        sub_gps_sess = pd.DataFrame(columns=hist_df.columns)
 
     # 2. Dati della giornata (tutte le sessioni svolte nella stessa data)
-    sub_gps_day = hist_df[hist_df["date_str"] == sel_date_str].copy()
+    if sel_date_str:
+        sub_gps_day = hist_df[hist_df["date_str"] == sel_date_str].copy()
+    else:
+        sub_gps_day = pd.DataFrame(columns=hist_df.columns)
 
     # 3. Dati della settimana (periodo lunedì-domenica del raduno o della sessione)
     try:
         if selected_camp is not None and "start_date" in selected_camp:
             w_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
-        else:
+        elif sel_date_str:
             cur_dt = pd.to_datetime(sel_date_str)
+            w_start = cur_dt - pd.Timedelta(days=cur_dt.weekday())
+        else:
+            cur_dt = pd.Timestamp.now().normalize()
             w_start = cur_dt - pd.Timedelta(days=cur_dt.weekday())
         w_end = w_start + pd.Timedelta(days=6)
         w_start_str = w_start.strftime("%Y-%m-%d")
@@ -304,16 +428,16 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         period_disp = sel_date_str
 
     sub_gps_week = hist_df[(hist_df["date_str"] >= w_start_str) & (hist_df["date_str"] <= w_end_str)].copy()
-    day_sessions_list = sorted(sub_gps_day["session_name"].dropna().unique().tolist())
-    week_sessions_list = sorted(sub_gps_week["session_name"].dropna().unique().tolist())
+    day_sessions_list = sorted(sub_gps_day["session_name"].dropna().unique().tolist()) if not sub_gps_day.empty else []
+    week_sessions_list = sorted(sub_gps_week["session_name"].dropna().unique().tolist()) if not sub_gps_week.empty else []
 
     try:
-        date_short = pd.to_datetime(sel_date_str).strftime("%d/%m/%y")
+        date_short = pd.to_datetime(sel_date_str).strftime("%d/%m/%y") if sel_date_str else "--"
     except Exception:
-        date_short = sel_date_str
+        date_short = sel_date_str if sel_date_str else "--"
 
     meta = {
-        "session_name": sel_sess_name,
+        "session_name": sel_sess_name if sel_sess_name else "Nessuna seduta registrata",
         "date_str": sel_date_str,
         "date_short": date_short,
         "date_disp": date_short,
@@ -327,6 +451,10 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         "week_end": w_end_str,
         "week_competition": str(selected_camp.get("competition") or "Nazionale Maggiore") if selected_camp else "Nazionale Maggiore",
         "week_name": str(selected_camp.get("week_name") or "Raduno") if selected_camp else "Settimana",
+        "camp_name": str(selected_camp.get("week_name") or "Raduno") if selected_camp else "Settimana",
+        "week_range": period_disp,
+        "session_date": sel_date_str if sel_date_str else "--",
+        "session_archetype": cur_type,
     }
 
     # Match per Trombinoscopio
@@ -419,6 +547,13 @@ def render_top_context_banner(meta: dict, match_info: dict = None, is_match_view
             unsafe_allow_html=True,
         )
     else:
+        disp_sess = meta.get('session_name', '')
+        disp_dt = meta.get('date_short', meta.get('date_str', ''))
+        if not disp_sess or disp_sess == "Nessuna seduta registrata":
+            title_text = "<span style='color:#FDE68A;'>Nessuna Seduta Registrata per questa Settimana</span>"
+        else:
+            title_text = f"{disp_dt} • {disp_sess}"
+
         st.markdown(
             f"""
             <div style="background:linear-gradient(90deg, #031926 0%, #002B49 100%); border-left:5px solid #D4AF37; border-radius:8px; padding:10px 16px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; color:#FFFFFF; box-shadow:0 3px 8px rgba(0,0,0,0.25);">
@@ -427,7 +562,7 @@ def render_top_context_banner(meta: dict, match_info: dict = None, is_match_view
                         🎯 CONFIGURAZIONE ATTIVA (BARRA LATERALE)
                     </div>
                     <div style="font-size:1.08rem; font-weight:800; color:#FFFFFF;">
-                        {meta.get('date_short', meta.get('date_str', ''))} • {meta.get('session_name', '')}
+                        {title_text}
                     </div>
                     <div style="font-size:0.72rem; color:#93C5FD; font-weight:600;">
                         Raduno: <b>{meta.get('week_name', 'Raduno')}</b> ({meta.get('week_period_disp', '')}) • {meta.get('week_competition', 'Nazionale Maggiore')}
