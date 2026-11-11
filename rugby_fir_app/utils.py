@@ -3676,22 +3676,184 @@ def build_franchige_day_report(
 
 _PHOTO_CACHE = {}
 
+PHOTO_MAPPINGS_FILE = os.path.join(os.path.dirname(__file__), "data", "player_photos.json")
+
 def clear_photo_cache():
     """Svuota la cache in memoria delle foto giocatori per forzare la rilettura istantanea dal disco."""
     global _PHOTO_CACHE
     _PHOTO_CACHE.clear()
 
+def get_player_photo_mappings() -> dict:
+    """Carica la mappatura ufficiale nome giocatore -> percorso relativo foto."""
+    if os.path.exists(PHOTO_MAPPINGS_FILE):
+        try:
+            with open(PHOTO_MAPPINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    if "mappings" in data and isinstance(data["mappings"], dict):
+                        return data["mappings"]
+                    return data
+        except Exception:
+            pass
+    return {}
+
+def get_player_photo_doubts() -> dict:
+    """Restituisce eventuali dubbi di abbinamento foto rilevati automaticamente."""
+    if os.path.exists(PHOTO_MAPPINGS_FILE):
+        try:
+            with open(PHOTO_MAPPINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "doubts" in data and isinstance(data["doubts"], dict):
+                    return data["doubts"]
+        except Exception:
+            pass
+    return {}
+
+def save_player_photo_mappings(mappings: dict, doubts: dict = None) -> bool:
+    """Salva la mappatura foto nel file JSON e svuota la cache delle immagini."""
+    try:
+        payload = {
+            "mappings": mappings,
+            "doubts": doubts or {},
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        with open(PHOTO_MAPPINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        clear_photo_cache()
+        return True
+    except Exception as e:
+        print(f"Errore nel salvataggio player_photos.json: {e}")
+        return False
+
+def get_all_data_image_files() -> list:
+    """Scansiona ricorsivamente la cartella 'data' e restituisce tutti i file immagine (.jpg, .png, ecc.) come percorsi relativi."""
+    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    if not os.path.exists(data_dir):
+        return []
+    valid_exts = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+    images = []
+    for root, dirs, files in os.walk(data_dir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in files:
+            if f.startswith("."):
+                continue
+            if f.lower().endswith(valid_exts):
+                full_p = os.path.join(root, f)
+                rel_p = os.path.relpath(full_p, data_dir)
+                images.append(rel_p)
+    return sorted(images)
+
+def encode_image_file_to_base64(file_path: str, max_width: int = 240) -> str:
+    """Carica un file immagine da disco, converte trasparenze e restituisce la stringa JPEG in base64."""
+    if not file_path or not os.path.exists(file_path):
+        return ""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(file_path) as im:
+            if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                if im.mode != "RGBA":
+                    im = im.convert("RGBA")
+                bg.paste(im, mask=im.split()[3])
+                im = bg
+            else:
+                im = im.convert("RGB")
+
+            w, h = im.size
+            if w > max_width:
+                new_h = int(round(h * (max_width / float(w))))
+                im = im.resize((max_width, new_h), Image.Resampling.LANCZOS)
+
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=90)
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception:
+        try:
+            with open(file_path, "rb") as img_f:
+                return base64.b64encode(img_f.read()).decode("utf-8")
+        except Exception:
+            return ""
+
+def scan_and_auto_match_photos(players_df: pd.DataFrame = None, existing_mappings: dict = None) -> tuple:
+    """
+    Cerca automaticamente la corrispondenza tra i giocatori del roster e i file immagine presenti in data/.
+    Regola fondamentale: SE HA DUBBI NON INSERISCE LA FOTO (lascia vuoto / sigla e registra il dubbio).
+    
+    Restituisce: (mappings, doubts)
+    """
+    import unicodedata
+    if players_df is None or players_df.empty:
+        players_df = get_players_df()
+        
+    image_files = get_all_data_image_files()
+    mappings = dict(existing_mappings or {})
+    doubts = {}
+    
+    def _norm(txt: str) -> str:
+        t = unicodedata.normalize("NFKD", str(txt)).encode("ASCII", "ignore").decode("utf-8")
+        return re.sub(r"[^a-zA-Z0-9]+", " ", t).lower().strip()
+        
+    # Calcolo frequenza cognomi nel roster per individuare cognomi condivisi (ambigui)
+    surname_counts = {}
+    for _, p in players_df.iterrows():
+        last = _norm(p.get("last_name") or "")
+        if last:
+            surname_counts[last] = surname_counts.get(last, 0) + 1
+    ambiguous_surnames = {k for k, v in surname_counts.items() if v > 1}
+    
+    for _, p in players_df.iterrows():
+        p_name = str(p["name_display"]).strip()
+        first = _norm(p.get("first_name") or "")
+        last = _norm(p.get("last_name") or "")
+        
+        candidates = []
+        for rel in image_files:
+            bname = os.path.splitext(os.path.basename(rel))[0]
+            b_norm = _norm(bname)
+            
+            # Priorità 1: Sia il nome che il cognome sono presenti nel file (min 3 caratteri ciascuno)
+            has_first = bool(first and len(first) >= 3 and (first in b_norm))
+            has_last = bool(last and len(last) >= 3 and (last in b_norm))
+            
+            if has_first and has_last:
+                candidates.append((1, rel, b_norm))
+            # Priorità 2: Cognome unico nel roster (minimo 4 caratteri)
+            elif has_last and len(last) >= 4 and (last not in ambiguous_surnames):
+                candidates.append((2, rel, b_norm))
+            # NOTA: MAI match sul solo nome proprio per evitare scambi di persona!
+            
+        if not candidates:
+            if p_name not in mappings:
+                mappings[p_name] = ""
+            continue
+            
+        unique_basenames = {c[2] for c in candidates}
+        if len(candidates) == 1:
+            # Corrispondenza univoca certa
+            mappings[p_name] = candidates[0][1]
+        elif len(unique_basenames) == 1:
+            # Stesso identico file presente in cartelle diverse (es. players 2 vs Piloni)
+            # Preferisci la cartella 'players 2' o la prima
+            p2 = [c[1] for c in candidates if "players 2" in c[1]]
+            mappings[p_name] = p2[0] if p2 else candidates[0][1]
+        else:
+            # DUBBIO REALE: più file con nomi diversi corrispondono all'atleta!
+            # Regola utente: SE HA DUBBI NON DEVE INSERIRE LA FOTO!
+            doubts[p_name] = [c[1] for c in candidates]
+            # Lascia vuoto se non c'era già una scelta manuale
+            if p_name not in mappings:
+                mappings[p_name] = ""
+                
+    return mappings, doubts
+
 def get_player_photo_base64(player_name: str, max_width: int = 240, force_refresh: bool = False) -> str:
     """
-    Cerca la foto ufficiale del giocatore nella cartella 'foto Giocatori NC NOV 26'
-    e seleziona SEMPRE la foto corretta ed esatta dell'atleta.
-    
-    Regole di abbinamento rigide:
-    1. Priorità 1: Nome e Cognome entrambi presenti nel file (es. 'Riccardo Casarin.png')
-    2. Priorità 2: Cognome presente nel file (min 4 lettere, es. 'Casarin.jpg')
-    3. MAI abbinare solo in base al nome di battesimo (es. 'Riccardo' o 'Michele') per evitare scambi di persona!
-    
-    Verifica in tempo reale la data di modifica su disco (mtime) e gestisce PNG trasparenti (RGBA).
+    Restituisce la foto ufficiale del giocatore codificata in Base64 JPEG.
+    Priorità assoluta alla mappatura utente salvata in player_photos.json:
+    - Se associato a un file: carica quel file specifico.
+    - Se l'utente ha scelto 'nessuna foto' o eliminato: restituisce stringa vuota (mostra sigla).
+    - Se non presente nel file di mapping: esegue la scansione euristica di fallback.
     """
     p_clean = str(player_name).strip()
     if not p_clean:
@@ -3706,102 +3868,76 @@ def get_player_photo_base64(player_name: str, max_width: int = 240, force_refres
     if not force_refresh and cache_key in _PHOTO_CACHE:
         cached_b64, cached_path, cached_mtime, cached_at = _PHOTO_CACHE[cache_key]
         if not cached_b64:
-            # Se prima non c'era, ri-controlla il disco ogni 1.5 secondi
             if (now_ts - cached_at) < 1.5:
                 return ""
         else:
-            # Se la foto era presente, verifica che il file esista ancora ed sia invariato
             try:
-                if os.path.exists(cached_path) and os.path.getmtime(cached_path) == cached_mtime:
+                if cached_path and os.path.exists(cached_path) and os.path.getmtime(cached_path) == cached_mtime:
                     return cached_b64
             except Exception:
                 pass
 
-    base_dir = os.path.join(os.path.dirname(__file__), "data", "foto Giocatori NC NOV 26")
-    if not os.path.exists(base_dir):
-        _PHOTO_CACHE[cache_key] = ("", "", 0, now_ts)
-        return ""
+    data_dir = os.path.join(os.path.dirname(__file__), "data")
 
-    def _norm(txt: str) -> str:
-        t = unicodedata.normalize("NFKD", str(txt)).encode("ASCII", "ignore").decode("utf-8")
-        return re.sub(r"[^a-zA-Z0-9]+", " ", t).lower().strip()
+    # 1. Controlla prima la mappatura ufficiale in player_photos.json
+    mappings = get_player_photo_mappings()
+    matched_path = None
 
-    p_norm = _norm(p_clean)
-    parts = p_norm.split()
-    first = parts[0] if len(parts) >= 2 else ""
-    last = parts[-1] if parts else ""
-    # Gestione nomi composti o multi-parola (es. Enoch Opoku Gyamfi, Martin Page Relo)
-    surname_parts = parts[1:] if len(parts) >= 2 else parts
-
-    candidates = []
-    valid_exts = (".jpg", ".png", ".jpeg", ".webp", ".bmp")
-
-    # Scansione ricorsiva (cartella principale e tutte le sottocartelle dei reparti)
-    for root, _, files in os.walk(base_dir):
-        for f in files:
-            f_low = f.lower()
-            if f_low.endswith(valid_exts) and not f.startswith("."):
-                full_p = os.path.join(root, f)
-                f_norm = _norm(f)
-
-                # Priorità 0: Corrispondenza esatta di tutte le parole del nome
-                if len(parts) >= 2 and all(p in f_norm for p in parts if len(p) >= 3):
-                    candidates.append((0, full_p))
-                # Priorità 1: Sia un componente del Cognome che il Nome presenti nel nome file
-                elif first and first in f_norm and any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
-                    candidates.append((1, full_p))
-                elif last and last in f_norm and first and first in f_norm:
-                    candidates.append((1, full_p))
-                # Priorità 2: Almeno un componente significativo del Cognome presente nel file (minimo 4 caratteri)
-                elif any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
-                    candidates.append((2, full_p))
-                elif last and len(last) >= 4 and last in f_norm:
-                    candidates.append((2, full_p))
-                # NOTA: NESSUNA Priorità per il solo nome proprio per evitare che Casarin prenda la foto di Favretto!
-
-    if not candidates:
-        _PHOTO_CACHE[cache_key] = ("", "", 0, now_ts)
-        return ""
-
-    # Ordina: prima per priorità di corrispondenza (1 > 2), poi per data file più recente
-    candidates.sort(key=lambda item: (item[0], -os.path.getmtime(item[1]) if os.path.exists(item[1]) else 0))
-    matched_path = candidates[0][1]
-    matched_mtime = os.path.getmtime(matched_path) if os.path.exists(matched_path) else 0
-
-    try:
-        from PIL import Image
-        import io
-        with Image.open(matched_path) as im:
-            # Gestione sfondo bianco pulito per PNG con canale alfa/trasparente
-            if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
-                bg = Image.new("RGB", im.size, (255, 255, 255))
-                if im.mode != "RGBA":
-                    im = im.convert("RGBA")
-                bg.paste(im, mask=im.split()[3])
-                im = bg
-            else:
-                im = im.convert("RGB")
-
-            # Ridimensionamento proporzionale ottimizzato
-            w, h = im.size
-            if w > max_width:
-                new_h = int(round(h * (max_width / float(w))))
-                im = im.resize((max_width, new_h), Image.Resampling.LANCZOS)
-
-            buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=90)
-            b64_str = base64.b64encode(buf.getvalue()).decode("utf-8")
-            _PHOTO_CACHE[cache_key] = (b64_str, matched_path, matched_mtime, now_ts)
-            return b64_str
-    except Exception:
-        try:
-            with open(matched_path, "rb") as img_f:
-                b64_str = base64.b64encode(img_f.read()).decode("utf-8")
-                _PHOTO_CACHE[cache_key] = (b64_str, matched_path, matched_mtime, now_ts)
-                return b64_str
-        except Exception:
-            _PHOTO_CACHE[cache_key] = ("", matched_path, matched_mtime, now_ts)
+    if p_clean in mappings:
+        rel_target = str(mappings[p_clean] or "").strip()
+        if not rel_target or rel_target.upper() in ("NONE", "NULL", "-- NESSUNA FOTO (MOSTRA SOLO SIGLA) --", "--"):
+            # L'utente ha esplicitamente rimosso o disabilitato la foto per mostrare la sola sigla
+            _PHOTO_CACHE[cache_key] = ("", "", 0, now_ts)
             return ""
+        cand = os.path.join(data_dir, rel_target) if not os.path.isabs(rel_target) else rel_target
+        if os.path.exists(cand):
+            matched_path = cand
+
+    # 2. Se non trovato tramite mappatura diretta, prova matching euristico di fallback
+    if not matched_path:
+        def _norm(txt: str) -> str:
+            t = unicodedata.normalize("NFKD", str(txt)).encode("ASCII", "ignore").decode("utf-8")
+            return re.sub(r"[^a-zA-Z0-9]+", " ", t).lower().strip()
+
+        p_norm = _norm(p_clean)
+        parts = p_norm.split()
+        first = parts[0] if len(parts) >= 2 else ""
+        last = parts[-1] if parts else ""
+        surname_parts = parts[1:] if len(parts) >= 2 else parts
+
+        candidates = []
+        valid_exts = (".jpg", ".png", ".jpeg", ".webp", ".bmp")
+
+        for root, dirs, files in os.walk(data_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for f in files:
+                f_low = f.lower()
+                if f_low.endswith(valid_exts) and not f.startswith("."):
+                    full_p = os.path.join(root, f)
+                    f_norm = _norm(f)
+
+                    if len(parts) >= 2 and all(p in f_norm for p in parts if len(p) >= 3):
+                        candidates.append((0, full_p))
+                    elif first and first in f_norm and any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
+                        candidates.append((1, full_p))
+                    elif last and last in f_norm and first and first in f_norm:
+                        candidates.append((1, full_p))
+                    elif any(sp in f_norm for sp in surname_parts if len(sp) >= 4):
+                        candidates.append((2, full_p))
+                    elif last and len(last) >= 4 and last in f_norm:
+                        candidates.append((2, full_p))
+
+        if not candidates:
+            _PHOTO_CACHE[cache_key] = ("", "", 0, now_ts)
+            return ""
+
+        candidates.sort(key=lambda item: (item[0], -os.path.getmtime(item[1]) if os.path.exists(item[1]) else 0))
+        matched_path = candidates[0][1]
+
+    matched_mtime = os.path.getmtime(matched_path) if os.path.exists(matched_path) else 0
+    b64_str = encode_image_file_to_base64(matched_path, max_width=max_width)
+    _PHOTO_CACHE[cache_key] = (b64_str, matched_path, matched_mtime, now_ts)
+    return b64_str
 
 
 def get_athlete_oval_career_profile(player_name: str) -> dict:

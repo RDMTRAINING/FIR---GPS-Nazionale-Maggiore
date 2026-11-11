@@ -1,3 +1,4 @@
+import os
 import datetime
 import streamlit as st
 import pandas as pd
@@ -9,12 +10,13 @@ import views.admin_utenti
 def render_pannello_controllo(t: dict):
     render_page_header(
         "Pannello di Controllo Organizzativo FIR",
-        "Gestione Roster • Atleti Raduno • Storico Partite • Formazione Match • Tipologie Sessioni • Gestione Utenti & Accessi",
+        "Gestione Roster • Foto & Immagini • Atleti Raduno • Storico Partite • Formazione Match • Tipologie Sessioni • Gestione Utenti & Accessi",
         "bi-sliders",
     )
 
     cards_controllo = [
         {"id": "roster", "title": "Gestione Roster", "desc": "Anagrafica atleti, ruoli, club, Vmax e parametri", "icon": "bi-person-vcard"},
+        {"id": "foto_giocatori", "title": "Foto & Immagini Roster", "desc": "Associazione volti e file immagini della cartella data agli atleti", "icon": "bi-camera"},
         {"id": "raduni", "title": "Atleti Raduno", "desc": "Convocazioni raduno, composizione e clonazione lista", "icon": "bi-people-fill"},
         {"id": "partite", "title": "Storico Partite", "desc": "Calendario match, risultati e avversari", "icon": "bi-calendar-event"},
         {"id": "formazioni", "title": "Formazione Match", "desc": "Formazione 1-15 titolari e 16-23 finishers", "icon": "bi-shield-check"},
@@ -26,6 +28,8 @@ def render_pannello_controllo(t: dict):
 
     if active_sub == "roster":
         _render_sub_roster(t)
+    elif active_sub == "foto_giocatori":
+        _render_sub_foto_giocatori(t)
     elif active_sub == "raduni":
         _render_sub_raduni(t)
     elif active_sub == "partite":
@@ -563,8 +567,9 @@ def _render_sub_gestione_gin(players_df: pd.DataFrame):
 def _render_sub_roster(t: dict):
     players_df = utils.get_players_df()
 
-    tab_anagrafica, tab_gin = st.tabs([
+    tab_anagrafica, tab_foto, tab_gin = st.tabs([
         "📋 Anagrafica & Parametri Roster",
+        "📸 Foto & Riconoscimento Atleti",
         "🌟 Gestione Lista G.I.N. (Atleti Monitorati)",
     ])
 
@@ -573,8 +578,302 @@ def _render_sub_roster(t: dict):
             _fragment_roster_editor(players_df)
         _fragment_roster_table(players_df)
 
+    with tab_foto:
+        _render_sub_foto_giocatori(t)
+
     with tab_gin:
         _render_sub_gestione_gin(players_df)
+
+
+# ==============================================================================
+# 1.B FOTO & IMMAGINI ROSTER (ASSOCIAZIONE FILE DATA)
+# ==============================================================================
+def _render_sub_foto_giocatori(t: dict):
+    """
+    Sottopagina per l'associazione del nome del giocatore del Roster al file immagine
+    presente nella cartella data (e sottocartelle).
+    
+    Regole di business:
+    - Il sistema cerca da solo la corrispondenza.
+    - Se ha dubbi non inserisce la foto e segnala l'ambiguità per la revisione manuale.
+    - L'utente può cambiare l'associazione selezionando qualsiasi file immagine in data/.
+    - L'utente può eliminare l'associazione lasciando la sola sigla del giocatore.
+    - NESSUN DATO nel database viene eliminato (GPS, formazioni, partite, oval, gymaware rimangono intatti).
+    """
+    players_df = utils.get_players_df()
+    if players_df.empty:
+        st.warning("Nessun atleta censito nel Roster.")
+        return
+
+    # Inizializzazione session state per mappature e dubbi
+    if "player_photo_mappings" not in st.session_state:
+        st.session_state["player_photo_mappings"] = utils.get_player_photo_mappings()
+    if "player_photo_doubts" not in st.session_state:
+        st.session_state["player_photo_doubts"] = utils.get_player_photo_doubts()
+
+    # Se non c'è ancora una mappatura, esegui la prima ricerca automatica conservativa
+    if not st.session_state["player_photo_mappings"]:
+        auto_m, auto_d = utils.scan_and_auto_match_photos(players_df)
+        st.session_state["player_photo_mappings"] = auto_m
+        st.session_state["player_photo_doubts"] = auto_d
+        utils.save_player_photo_mappings(auto_m, auto_d)
+
+    cur_mappings = st.session_state["player_photo_mappings"]
+    cur_doubts = st.session_state["player_photo_doubts"]
+    all_images = utils.get_all_data_image_files()
+
+    none_choice = "-- Nessuna Foto (Mostra Solo Sigla) --"
+    file_choices = [none_choice] + all_images
+
+    # Header Card FIR
+    st.markdown(
+        """
+        <div style="background:linear-gradient(135deg, #031926 0%, #002B49 60%, #004B87 100%); border-radius:12px; padding:18px 22px; margin-bottom:16px; border-left:6px solid #D4AF37; color:#FFFFFF;">
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                <div>
+                    <div style="font-size:0.72rem; font-weight:800; text-transform:uppercase; letter-spacing:0.12em; color:#D4AF37;">FEDERAZIONE ITALIANA RUGBY &bull; CONFIGURAZIONE FOTOGRAFICA</div>
+                    <h3 style="margin:2px 0 6px 0; color:#FFFFFF; font-size:1.35rem; font-weight:800;">📸 Associazione Foto & Riconoscimento Volti Giocatori</h3>
+                    <div style="font-size:0.84rem; color:#CBD5E1; max-width:850px; line-height:1.4;">
+                        Collega ciascun atleta del Roster con un file immagine presente nella cartella <b>data/</b> (o relative sottocartelle).
+                        Il sistema cerca in automatico la corrispondenza esatta; <b>se ha dubbi non inserisce la foto e mantiene la sigla</b>.
+                        Puoi associare qualsiasi immagine, modificare l'abbinamento o eliminare la foto per lasciare la sola sigla ufficiale.
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <span style="background:#10B981; color:#031926; font-weight:800; padding:4px 12px; border-radius:999px; font-size:0.78rem;">
+                        🛡️ ZERO RISCHIO DATI DB
+                    </span>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Indicatori KPI
+    total_roster = len(players_df)
+    with_photo = sum(1 for p, f in cur_mappings.items() if f and str(f).strip() and str(f) != none_choice)
+    no_photo = total_roster - with_photo
+    n_doubts = len(cur_doubts)
+    n_images = len(all_images)
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Totale Atleti Roster", f"{total_roster}")
+    k2.metric("Con Foto Associata", f"{with_photo}", delta=f"{(with_photo/max(total_roster,1)*100):.0f}% con foto", delta_color="normal")
+    k3.metric("Solo Sigla (Iniziali)", f"{no_photo}", delta="Senza foto", delta_color="off")
+    k4.metric("Dubbi Rilevati", f"{n_doubts}", delta="Da verificare" if n_doubts > 0 else "Nessun dubbio", delta_color="inverse" if n_doubts > 0 else "normal")
+    k5.metric("File Immagini in data/", f"{n_images}")
+
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    # Azioni Globali: Riconoscimento automatico e Salvataggio
+    b_col1, b_col2, b_col3, b_col4 = st.columns([1.8, 1.8, 1.5, 1.5])
+
+    if b_col1.button("🔄 Cerca Corrispondenze Automatiche", use_container_width=True, key="btn_auto_match_photos", help="Riavvia la scansione automatica: abbina le foto certe e azzera/segnala i casi con dubbi"):
+        new_m, new_d = utils.scan_and_auto_match_photos(players_df)
+        st.session_state["player_photo_mappings"] = new_m
+        st.session_state["player_photo_doubts"] = new_d
+        utils.save_player_photo_mappings(new_m, new_d)
+        st.success(f"✓ Scansione completata: {len([m for m, v in new_m.items() if v])} foto certe abbinate, {len(new_d)} dubbi lasciati senza foto.")
+        st.rerun()
+
+    if b_col2.button("💾 Salva Tutte le Associazioni", type="primary", use_container_width=True, key="btn_save_photo_mappings"):
+        utils.save_player_photo_mappings(st.session_state["player_photo_mappings"], st.session_state["player_photo_doubts"])
+        st.success("✅ Tutte le associazioni foto sono state salvate nel database (player_photos.json). Aggiornamento attivo istantaneamente su tutte le pagine!")
+        st.rerun()
+
+    if b_col3.button("⚪ Imposta Tutte Solo Sigla", use_container_width=True, key="btn_clear_all_photos", help="Rimuove tutte le associazioni e imposta tutti gli atleti con la sola sigla"):
+        for p in players_df["name_display"]:
+            st.session_state["player_photo_mappings"][str(p).strip()] = ""
+        st.session_state["player_photo_doubts"] = {}
+        st.info("Tutte le foto sono state rimosse. Clicca su 'Salva' per applicare.")
+        st.rerun()
+
+    # Sezione caricamento nuova foto
+    with st.expander("📤 Carica Nuova Foto Immagine Giocatore nella cartella Data", expanded=False):
+        st.caption("Trascina qui il file immagine del giocatore (.jpg, .jpeg, .png). Verrà salvato nella cartella dati e sarà subito disponibile per l'abbinamento.")
+        uploaded_img = st.file_uploader("Seleziona File Immagine", type=["jpg", "jpeg", "png", "webp", "bmp"], key="upload_photo_widget")
+        if uploaded_img is not None:
+            data_folder = os.path.join(os.path.dirname(utils.__file__), "data", "foto Giocatori NC NOV 26")
+            os.makedirs(data_folder, exist_ok=True)
+            dest_file = os.path.join(data_folder, uploaded_img.name)
+            with open(dest_file, "wb") as f_up:
+                f_up.write(uploaded_img.getbuffer())
+            utils.clear_photo_cache()
+            st.success(f"File **'{uploaded_img.name}'** caricato con successo! Ora è selezionabile per qualsiasi atleta.")
+            st.rerun()
+
+    # Controllo modifiche non salvate
+    disk_mappings = utils.get_player_photo_mappings()
+    if cur_mappings != disk_mappings:
+        st.warning("⚠️ **Modifiche non ancora salvate su disco!** Ricorda di cliccare sul pulsante verde **'💾 Salva Tutte le Associazioni'** in alto per confermare.")
+
+    st.markdown("---")
+
+    # Filtri di Ricerca
+    f1, f2, f3 = st.columns([2.0, 1.2, 1.4])
+    q_search = f1.text_input("🔍 Cerca giocatore per nome, cognome o sigla...", key="photo_q_search")
+    q_dept = f2.selectbox("Filtro Reparto", ["Tutti i Reparti", "Avanti", "TreQuarti"], key="photo_q_dept")
+    q_filter = f3.selectbox("Stato Foto", ["Tutti gli Atleti", "Solo Con Foto (✓)", "Solo Senza Foto / Sigla (⚪)", "Solo con Dubbi Rilevati (⚠️)"], key="photo_q_filter")
+
+    filt_players = players_df.copy()
+    if q_dept != "Tutti i Reparti":
+        filt_players = filt_players[filt_players["department"] == q_dept]
+
+    if q_search.strip():
+        qs = q_search.strip().lower()
+        mask = (
+            filt_players["name_display"].astype(str).str.lower().str.contains(qs, na=False)
+            | filt_players["code"].astype(str).str.lower().str.contains(qs, na=False)
+            | filt_players["club"].astype(str).str.lower().str.contains(qs, na=False)
+        )
+        filt_players = filt_players[mask]
+
+    # Filtro stato
+    if q_filter == "Solo Con Foto (✓)":
+        filt_players = filt_players[filt_players["name_display"].apply(lambda n: bool(cur_mappings.get(str(n).strip())))]
+    elif q_filter == "Solo Senza Foto / Sigla (⚪)":
+        filt_players = filt_players[filt_players["name_display"].apply(lambda n: not bool(cur_mappings.get(str(n).strip())))]
+    elif q_filter == "Solo con Dubbi Rilevati (⚠️)":
+        filt_players = filt_players[filt_players["name_display"].apply(lambda n: str(n).strip() in cur_doubts)]
+
+    st.markdown(
+        f"""
+        <div style="font-size:0.85rem; color:#475569; margin-bottom:12px;">
+            Visualizzazione di <b>{len(filt_players)}</b> atleti su {len(players_df)} totali
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if filt_players.empty:
+        st.info("Nessun atleta corrisponde ai filtri selezionati.")
+        return
+
+    # Paginazione (20 per pagina per massima reattività)
+    page_size = 20
+    n_pages = max(1, (len(filt_players) + page_size - 1) // page_size)
+    if "photo_curr_page" not in st.session_state:
+        st.session_state["photo_curr_page"] = 1
+    if st.session_state["photo_curr_page"] > n_pages:
+        st.session_state["photo_curr_page"] = n_pages
+
+    if n_pages > 1:
+        pg_c1, pg_c2, pg_c3 = st.columns([1, 3, 1])
+        if pg_c1.button("◀ Pagina Prec.", disabled=(st.session_state["photo_curr_page"] <= 1), key="photo_btn_prev"):
+            st.session_state["photo_curr_page"] -= 1
+            st.rerun()
+        pg_c2.markdown(f"<div style='text-align:center; padding-top:6px; font-weight:700;'>Pagina {st.session_state['photo_curr_page']} di {n_pages}</div>", unsafe_allow_html=True)
+        if pg_c3.button("Pagina Succ. ▶", disabled=(st.session_state["photo_curr_page"] >= n_pages), key="photo_btn_next"):
+            st.session_state["photo_curr_page"] += 1
+            st.rerun()
+
+    start_idx = (st.session_state["photo_curr_page"] - 1) * page_size
+    page_players = filt_players.iloc[start_idx : start_idx + page_size]
+
+    # Rendering griglia atleti a 2 colonne
+    col_left, col_right = st.columns(2)
+    cols = [col_left, col_right]
+
+    for i, (_, p_row) in enumerate(page_players.iterrows()):
+        p_name = str(p_row["name_display"]).strip()
+        p_role = str(p_row.get("role") or "")
+        p_club = str(p_row.get("club") or "")
+        p_sigla = str(p_row.get("code") or (p_name.split()[0][0] + p_name.split()[-1][0] if len(p_name.split()) >= 2 else "FIR")).upper()
+        p_dept = str(p_row.get("department") or "")
+
+        cur_assigned = cur_mappings.get(p_name, "")
+        p_doubt_files = cur_doubts.get(p_name, [])
+
+        with cols[i % 2]:
+            st.markdown(
+                """
+                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:10px; padding:12px; margin-bottom:12px; box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                """,
+                unsafe_allow_html=True,
+            )
+
+            c_img, c_ctl = st.columns([1.1, 2.9])
+
+            with c_img:
+                photo_b64 = ""
+                if cur_assigned and cur_assigned != none_choice:
+                    full_p = os.path.join(os.path.dirname(utils.__file__), "data", cur_assigned)
+                    photo_b64 = utils.encode_image_file_to_base64(full_p, max_width=160)
+
+                if photo_b64:
+                    st.markdown(
+                        f"""
+                        <div style="width:78px; height:94px; border-radius:10px; border:2.5px solid #D4AF37; overflow:hidden; box-shadow:0 3px 8px rgba(0,0,0,0.18);">
+                            <img src="data:image/jpeg;base64,{photo_b64}" style="width:100%; height:100%; object-fit:cover; object-position:top center; display:block;" alt="{p_name}">
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"""
+                        <div style="width:78px; height:94px; border-radius:10px; background:linear-gradient(135deg, #002B49 0%, #004D7A 100%); border:2.5px solid #D4AF37; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#D4AF37; box-shadow:0 3px 8px rgba(0,0,0,0.18);">
+                            <div style="font-weight:900; font-size:1.5rem; letter-spacing:0.05em;">{p_sigla}</div>
+                            <div style="font-size:0.60rem; color:#93C5FD; text-transform:uppercase;">Solo Sigla</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+            with c_ctl:
+                st.markdown(f"**{p_name}**")
+                st.caption(f"{p_role} &bull; {p_club} &bull; Sigla: **{p_sigla}** ({p_dept})")
+
+                # Se ci sono dubbi rilevati, mostra l'avviso e i pulsanti di assegnazione rapida
+                if p_doubt_files and not cur_assigned:
+                    st.markdown(
+                        f"""
+                        <div style="background:#FFFBEB; border:1px solid #FDE68A; border-radius:6px; padding:4px 8px; margin-bottom:6px; font-size:0.75rem; color:#B45309;">
+                            ⚠️ <b>Dubbio corrispondenza:</b> rilevati {len(p_doubt_files)} file possibili. Seleziona quale assegnare:
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    d_cols = st.columns(len(p_doubt_files))
+                    for d_idx, cand_f in enumerate(p_doubt_files):
+                        short_f = os.path.basename(cand_f)
+                        if d_cols[d_idx].button(f"👉 {short_f}", key=f"btn_doubt_{i}_{d_idx}", help=f"Assegna {cand_f}"):
+                            st.session_state["player_photo_mappings"][p_name] = cand_f
+                            if p_name in st.session_state["player_photo_doubts"]:
+                                del st.session_state["player_photo_doubts"][p_name]
+                            utils.clear_photo_cache()
+                            st.rerun()
+
+                # Selectbox per cambiare o eliminare la foto
+                cur_idx = 0
+                if cur_assigned in file_choices:
+                    cur_idx = file_choices.index(cur_assigned)
+
+                sel_photo = st.selectbox(
+                    "File Immagine Associato",
+                    file_choices,
+                    index=cur_idx,
+                    key=f"sel_photo_{p_name}_{i}",
+                    label_visibility="collapsed",
+                )
+
+                if sel_photo != (cur_assigned if cur_assigned else none_choice):
+                    new_val = sel_photo if sel_photo != none_choice else ""
+                    st.session_state["player_photo_mappings"][p_name] = new_val
+                    if p_name in st.session_state["player_photo_doubts"]:
+                        del st.session_state["player_photo_doubts"][p_name]
+                    utils.clear_photo_cache()
+                    st.rerun()
+
+                c_act1, c_act2 = st.columns([1.5, 1.5])
+                if cur_assigned:
+                    if c_act1.button("🗑️ Rimuovi (Solo Sigla)", key=f"del_photo_{p_name}_{i}", help="Rimuove la foto e lascia solo la sigla"):
+                        st.session_state["player_photo_mappings"][p_name] = ""
+                        utils.clear_photo_cache()
+                        st.rerun()
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ==============================================================================
