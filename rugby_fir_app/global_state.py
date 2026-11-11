@@ -136,6 +136,80 @@ def init_global_state(hist_df: pd.DataFrame = None):
             st.session_state["global_selected_match_label"] = m_lbl
 
 
+def sync_selected_camp_by_id(camp_id: int):
+    """Sincronizza la settimana raduno nella barra laterale a partire dall'ID del raduno."""
+    camps_df = utils.get_camps_df()
+    if camps_df.empty:
+        return
+    sub = camps_df[camps_df["id"].astype(int) == int(camp_id)]
+    if not sub.empty:
+        cr = sub.iloc[0]
+        s_dt = str(cr.get("start_date") or cr.get("start_date_str") or "")[:10]
+        w_nm = str(cr.get("week_name") or "Raduno")
+        lbl = f"{s_dt} • {w_nm}"
+        st.session_state["global_camp_label"] = lbl
+        st.session_state["global_selected_camp_obj"] = cr.to_dict()
+        st.session_state["sb_global_sel_camp"] = lbl
+        st.session_state["_prev_sb_global_sel_camp"] = lbl
+        # reset session key to default for new camp
+        st.session_state.pop("global_selected_session_key", None)
+        st.session_state.pop("global_selected_date", None)
+        st.session_state.pop("global_selected_session_name", None)
+        st.session_state.pop("sb_global_sel_sess", None)
+
+
+def sync_selected_camp_by_date(date_str: str):
+    """Sincronizza la settimana raduno nella barra laterale a partire da una data (es. lunedì inizio settimana)."""
+    camps_df = utils.get_camps_df()
+    if camps_df.empty:
+        return
+    target_dt = pd.to_datetime(str(date_str)[:10], errors="coerce")
+    if pd.isna(target_dt):
+        return
+    for _, cr in camps_df.sort_values("start_date", ascending=False).iterrows():
+        s_dt = str(cr.get("start_date") or cr.get("start_date_str") or "")[:10]
+        c_start = pd.to_datetime(s_dt, errors="coerce")
+        if not pd.isna(c_start):
+            c_end = c_start + pd.Timedelta(days=6)
+            if c_start <= target_dt <= c_end or c_start == target_dt:
+                sync_selected_camp_by_id(int(cr["id"]))
+                return
+
+
+def sync_selected_session(date_str: str, session_name: str):
+    """Sincronizza la seduta GPS nella barra laterale."""
+    d_clean = str(date_str).strip()
+    s_clean = str(session_name).strip()
+    key = f"{d_clean} • {s_clean}"
+    st.session_state["global_selected_session_key"] = key
+    st.session_state["global_selected_date"] = d_clean
+    st.session_state["global_selected_session_name"] = s_clean
+    st.session_state["sb_global_sel_sess"] = key
+    st.session_state["global_selected_type"] = utils.get_session_assigned_type(d_clean, s_clean)
+
+
+def sync_selected_match(match_date_or_name: str):
+    """Sincronizza il match / partita nella barra laterale a partire dalla data o nome della gara."""
+    lineup_summary = utils.get_lineup_matches_summary()
+    if lineup_summary.empty:
+        return
+    q = str(match_date_or_name).strip()
+    sub = lineup_summary[lineup_summary["date_str"].astype(str) == q[:10]]
+    if sub.empty:
+        sub = lineup_summary[lineup_summary["match_name"].astype(str).str.lower() == q.lower()]
+    if not sub.empty:
+        r = sub.iloc[0]
+        m_dt = str(r["date_str"])
+        m_nm = str(r["match_name"])
+        m_comp = str(r["competition"])
+        m_lbl = f"{m_dt} • {m_nm} ({m_comp})"
+        st.session_state["global_selected_match_date"] = m_dt
+        st.session_state["global_selected_match_name"] = m_nm
+        st.session_state["global_selected_match_comp"] = m_comp
+        st.session_state["global_selected_match_label"] = m_lbl
+        st.session_state["sb_global_sel_match"] = m_lbl
+
+
 def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
     """
     Renderizza il Pannello di Selezione Globale nella Sidebar.
@@ -211,6 +285,9 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
     if cur_camp_lbl not in camp_options:
         cur_camp_lbl = camp_options[default_camp_idx] if default_camp_idx < len(camp_options) else camp_options[0]
 
+    if st.session_state.get("sb_global_sel_camp") not in camp_options:
+        st.session_state["sb_global_sel_camp"] = cur_camp_lbl
+
     sel_camp = st.selectbox(
         "Settimana Raduno FIR:",
         camp_options,
@@ -273,6 +350,9 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
     else:
         cur_sess_key = st.session_state.get("global_selected_session_key")
         default_sess_idx = sess_labels.index(cur_sess_key) if (cur_sess_key and cur_sess_key in sess_labels) else 0
+
+        if st.session_state.get("sb_global_sel_sess") not in sess_labels:
+            st.session_state["sb_global_sel_sess"] = sess_labels[default_sess_idx]
 
         sel_sess_lbl = st.selectbox(
             "Seduta GPS da Analizzare:",
@@ -372,6 +452,9 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         cur_m_lbl = st.session_state.get("global_selected_match_label", default_m_lbl)
         if cur_m_lbl not in m_labels:
             cur_m_lbl = default_m_lbl
+
+        if st.session_state.get("sb_global_sel_match") not in m_labels:
+            st.session_state["sb_global_sel_match"] = cur_m_lbl
 
         sel_m_lbl = st.selectbox(
             "Gara (Trombinoscopio Match):",

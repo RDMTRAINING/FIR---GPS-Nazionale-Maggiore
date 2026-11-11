@@ -24,8 +24,10 @@ def _get_available_weeks_options(start_date: str = "2024-08-01") -> tuple:
     first_mon = start_dt - pd.Timedelta(days=start_dt.weekday())
 
     # Lunedì di riferimento attuale (allineato con il dataset o data odierna)
-    now_dt = max(pd.Timestamp("2026-11-05"), pd.Timestamp.now())
-    latest_mon = now_dt - pd.Timedelta(days=now_dt.weekday())  # Es. 2026-11-02
+    camps_df = utils.get_camps_df()
+    max_c_dt = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else pd.Timestamp("2026-11-09")
+    now_dt = max(max_c_dt if not pd.isna(max_c_dt) else pd.Timestamp("2026-11-09"), pd.Timestamp.now())
+    latest_mon = now_dt - pd.Timedelta(days=now_dt.weekday())  # Es. 2026-11-09
     prev_mon = latest_mon - pd.Timedelta(days=7)  # Es. 2026-10-26 (ultima settimana conclusa fino a domenica)
 
     weeks = []
@@ -498,12 +500,16 @@ def _render_gin_list_manager():
         camps_df = utils.get_camps_df()
         camp_opts = ["Seleziona un Raduno per importare..."]
         camp_map = {}
+        def_camp_idx = 0
+        cur_camp = st.session_state.get("global_selected_camp_obj")
         if not camps_df.empty:
-            for _, cr in camps_df.sort_values("start_date", ascending=False).iterrows():
+            for idx_cr, cr in camps_df.sort_values("start_date", ascending=False).reset_index(drop=True).iterrows():
                 lbl = f"{cr.get('name', 'Raduno')} ({cr.get('start_date', '')})"
                 camp_opts.append(lbl)
                 camp_map[lbl] = int(cr["id"])
-        sel_camp_lbl = b3.selectbox("Importa Atleti da Raduno", camp_opts, label_visibility="collapsed", key="sel_gin_from_camp")
+                if cur_camp and int(cur_camp.get("id", -1)) == int(cr["id"]):
+                    def_camp_idx = idx_cr + 1
+        sel_camp_lbl = b3.selectbox("Importa Atleti da Raduno", camp_opts, index=def_camp_idx, label_visibility="collapsed", key="sel_gin_from_camp")
         if b4.button("Aggiungi Raduno alla Lista G.I.N.", use_container_width=True, disabled=(sel_camp_lbl not in camp_map), key="btn_gin_add_camp"):
             cid = camp_map[sel_camp_lbl]
             cp_df = utils.get_camp_players_df()
@@ -575,14 +581,26 @@ def _render_tab_report_gin(df: pd.DataFrame):
     week_labels = [w[1] for w in week_options]
     week_dict = {w[1]: w[0] for w in week_options}
 
+    # Sincronizzazione automatica con la settimana selezionata nella barra laterale
+    cur_camp = st.session_state.get("global_selected_camp_obj")
+    if cur_camp and "start_date" in cur_camp:
+        camp_s_dt = str(cur_camp["start_date"])[:10]
+        for w_i, (w_mon, _) in enumerate(week_options):
+            if w_mon == camp_s_dt:
+                default_week_idx = w_i
+                break
+
     sel_week_lbl = c2.selectbox(
         "Settimana da Analizzare",
         week_labels,
         index=default_week_idx,
-        help="In automatico posizionato sull'ultima settimana conclusa fino a domenica. Seleziona per analizzare qualsiasi settimana a ritroso dal 2024.",
+        help="Sincronizzata automaticamente con la settimana della barra laterale.",
         key="gin_sel_week_dropdown",
     )
     ref_mon_input = week_dict[sel_week_lbl]
+    if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_input:
+        import global_state
+        global_state.sync_selected_camp_by_date(ref_mon_input)
     dept_filter = c3.selectbox("Filtro Reparto", ["Tutti", "Avanti", "TreQuarti"], key="gin_dept_filter")
 
     # Filtri Riga 2 (Filtro Ruolo, Ambito GIN, Ricerca Atleta)

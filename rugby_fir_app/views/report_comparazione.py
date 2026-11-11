@@ -2515,6 +2515,15 @@ def _render_tab_confronto_settimane(df_fir: pd.DataFrame, players_df: pd.DataFra
     w_keys = [w["key"] for w in week_choices]
     w_map = {w["key"]: w for w in week_choices}
 
+    # Sincronizza Settimana A di default con la settimana del raduno attivo nella barra laterale
+    cur_camp = st.session_state.get("global_selected_camp_obj")
+    if cur_camp and "start_date" in cur_camp:
+        camp_s_dt = str(cur_camp["start_date"])[:10]
+        for k in w_keys:
+            if camp_s_dt in str(w_map[k].get("start", "")) or camp_s_dt in str(k):
+                st.session_state["cmp_wk_a"] = k
+                break
+
     # Mantieni selezioni fisse in session_state finché non modificate manualmente dall'utente
     if "cmp_wk_a" not in st.session_state or st.session_state["cmp_wk_a"] not in w_keys:
         st.session_state["cmp_wk_a"] = w_keys[0]
@@ -2528,6 +2537,10 @@ def _render_tab_confronto_settimane(df_fir: pd.DataFrame, players_df: pd.DataFra
     idx_b = w_keys.index(st.session_state["cmp_wk_b"])
     wk_a_key = c1.selectbox("1. Settimana Raduno A (Riferimento)", w_keys, index=idx_a, format_func=lambda k: w_map[k]["label"], key="cmp_wk_a")
     wk_b_key = c2.selectbox("2. Settimana Raduno B (Confronto)", w_keys, index=idx_b, format_func=lambda k: w_map[k]["label"], key="cmp_wk_b")
+
+    if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] not in str(wk_a_key):
+        import global_state
+        global_state.sync_selected_camp_by_date(str(w_map[wk_a_key].get("start", wk_a_key))[:10])
     excl_matches = c3.checkbox("Solo Allenamenti (Escludi Match del Sabato)", value=st.session_state["cmp_wk_excl_match"], key="cmp_wk_excl_match")
 
     bundle = build_confronto_settimane_bundle(

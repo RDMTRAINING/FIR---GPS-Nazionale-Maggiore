@@ -25,7 +25,10 @@ def _get_available_weeks_options() -> tuple:
     import datetime
     today_dt = pd.to_datetime(datetime.date.today())
     today_mon = today_dt - pd.Timedelta(days=today_dt.weekday())
-    latest_mon = max(today_mon, pd.Timestamp("2026-11-02"))
+    
+    camps_df = utils.get_camps_df()
+    max_camp_mon = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else pd.Timestamp("2026-11-09")
+    latest_mon = max(today_mon, max_camp_mon if not pd.isna(max_camp_mon) else pd.Timestamp("2026-11-09"))
 
     weeks = []
     cur = latest_mon
@@ -73,12 +76,16 @@ def _render_gin_list_manager():
         camps_df = utils.get_camps_df()
         camp_opts = ["Seleziona un Raduno per importare..."]
         camp_map = {}
+        def_camp_idx = 0
+        cur_camp = st.session_state.get("global_selected_camp_obj")
         if not camps_df.empty:
-            for _, cr in camps_df.sort_values("start_date", ascending=False).iterrows():
+            for idx_cr, cr in camps_df.sort_values("start_date", ascending=False).reset_index(drop=True).iterrows():
                 lbl = f"{cr.get('name', 'Raduno')} ({cr.get('start_date', '')})"
                 camp_opts.append(lbl)
                 camp_map[lbl] = int(cr["id"])
-        sel_camp_lbl = b3.selectbox("Importa Atleti da Raduno", camp_opts, label_visibility="collapsed", key="sel_6w_from_camp")
+                if cur_camp and int(cur_camp.get("id", -1)) == int(cr["id"]):
+                    def_camp_idx = idx_cr + 1
+        sel_camp_lbl = b3.selectbox("Importa Atleti da Raduno", camp_opts, index=def_camp_idx, label_visibility="collapsed", key="sel_6w_from_camp")
         if b4.button("Aggiungi Raduno alla Lista G.I.N.", use_container_width=True, disabled=(sel_camp_lbl not in camp_map), key="btn_6w_add_camp"):
             cid = camp_map[sel_camp_lbl]
             cp_df = utils.get_camp_players_df()
@@ -480,17 +487,27 @@ def _render_tab_report_6weeks(t: dict):
     week_labels = [w[1] for w in week_options]
     week_dict = {w[1]: w[0] for w in week_options}
 
-    if "sel_6w_week" in st.session_state and "19/10" in str(st.session_state["sel_6w_week"]):
-        st.session_state["sel_6w_week"] = week_labels[default_week_idx]
+    # Sincronizzazione automatica con la settimana della barra laterale
+    cur_camp = st.session_state.get("global_selected_camp_obj")
+    if cur_camp and "start_date" in cur_camp:
+        camp_s_dt = str(cur_camp["start_date"])[:10]
+        for w_i, (w_mon, _) in enumerate(week_options):
+            if w_mon == camp_s_dt:
+                default_week_idx = w_i
+                break
 
     sel_week_lbl = f2.selectbox(
         "Settimana di Riferimento (Week)",
         week_labels,
         index=default_week_idx,
-        help="In automatico posizionato sulla settimana attuale. Seleziona qualsiasi settimana a ritroso.",
+        help="Sincronizzata automaticamente con la settimana della barra laterale. Seleziona qualsiasi settimana a ritroso.",
         key="sel_6w_week",
     )
     ref_mon_input = week_dict[sel_week_lbl]
+
+    if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_input:
+        import global_state
+        global_state.sync_selected_camp_by_date(ref_mon_input)
     dept_filter = f3.selectbox("Filtro Reparto", ["Tutti", "Avanti", "TreQuarti"], key="sel_6w_dept")
 
     # Barra Filtri — Riga 2 (Filtro Ruolo, Ordinamento, Sorgente GPS, Ambito GIN, Ricerca Atleta)
@@ -927,12 +944,19 @@ def _render_tab_franchige_day(t: dict):
     day_labels = [d[1] for d in day_options]
     day_dict = {d[1]: d[0] for d in day_options}
 
-    # Default index: prima giornata Match Day disponibile tra le recenti (es. 24/10/2026 o 31/10/2026) o prima data assoluta
+    # Sincronizzazione automatica con la data della seduta selezionata nella barra laterale
+    cur_sess_dt = st.session_state.get("global_selected_date")
     default_day_idx = 0
-    for idx, d_tup in enumerate(day_options):
-        if d_tup[2]:  # is_match
-            default_day_idx = idx
-            break
+    if cur_sess_dt:
+        for idx, d_tup in enumerate(day_options):
+            if d_tup[0] == cur_sess_dt:
+                default_day_idx = idx
+                break
+    else:
+        for idx, d_tup in enumerate(day_options):
+            if d_tup[2]:  # is_match
+                default_day_idx = idx
+                break
 
     # Barra Filtri — Riga 1 (Giorno da Analizzare, Reparto, Ruolo)
     d1, d2, d3 = st.columns([2.8, 1.2, 1.4])
@@ -941,10 +965,12 @@ def _render_tab_franchige_day(t: dict):
         "Giorno da Analizzare (Franchige & Nazionale)",
         day_labels,
         index=default_day_idx,
-        help="Seleziona qualsiasi data dal 2024 ad oggi. Le giornate con gare ufficiali (URC, Champions, Test Match) sono etichettate come MATCH DAY.",
+        help="Sincronizzato automaticamente con la seduta selezionata nella barra laterale.",
         key="sel_day_date_picker",
     )
     sel_date_str = day_dict[sel_day_lbl]
+    if cur_sess_dt and cur_sess_dt != sel_date_str:
+        st.session_state["global_selected_date"] = sel_date_str
 
     dept_filter = d2.selectbox("Filtro Reparto", ["Tutti", "Avanti", "TreQuarti"], key="day_dept_filter")
     roles_list = ["Tutti i Ruoli", "Pilone", "Tallonatore", "Seconda Linea", "Terza Linea", "Mediano di Mischia", "Apertura", "Centro", "Ala", "Estremo"]
@@ -1159,8 +1185,14 @@ def _render_tab_singolo_atleta_3w(t: dict):
     week_labels = [w[1] for w in week_options]
     week_dict = {w[1]: w[0] for w in week_options}
 
-    if "p3w_sel_week" in st.session_state and "19/10" in str(st.session_state["p3w_sel_week"]):
-        st.session_state["p3w_sel_week"] = week_labels[default_week_idx]
+    # Sincronizzazione automatica con la settimana selezionata nella barra laterale
+    cur_camp = st.session_state.get("global_selected_camp_obj")
+    if cur_camp and "start_date" in cur_camp:
+        camp_s_dt = str(cur_camp["start_date"])[:10]
+        for w_i, (w_mon, _) in enumerate(week_options):
+            if w_mon == camp_s_dt:
+                default_week_idx = w_i
+                break
 
     # Barra Filtri Giocatore Unificata (Settimana, Reparto, Ruolo, Giocatore)
     f_col1, f_col2, f_col3, f_col4 = st.columns([1.5, 1.0, 1.2, 2.0])
@@ -1168,9 +1200,13 @@ def _render_tab_singolo_atleta_3w(t: dict):
         "1. Settimana di Riferimento (Week 0)",
         week_labels,
         index=default_week_idx,
-        help="La settimana scelta sarà la 'Week 0' e verranno estratte anche le due settimane precedenti (Week -1 e Week -2).",
+        help="Sincronizzata automaticamente con la settimana della barra laterale.",
         key="p3w_sel_week",
     )
+    ref_mon_input = week_dict[sel_week_lbl]
+    if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_input:
+        import global_state
+        global_state.sync_selected_camp_by_date(ref_mon_input)
     filt_dept = f_col2.selectbox(
         "2. Filtro Reparto",
         ["Tutti", "Avanti", "TreQuarti"],

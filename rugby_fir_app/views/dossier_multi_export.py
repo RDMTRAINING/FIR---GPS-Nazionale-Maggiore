@@ -24,7 +24,10 @@ def _get_available_weeks_options():
         _mon = _today - pd.Timedelta(days=_today.weekday())
         return [(_mon.strftime("%Y-%m-%d"), f"{_mon.strftime('%d/%m/%y')} — {(_mon + pd.Timedelta(days=6)).strftime('%d/%m/%y')}")], 0
 
-    mondays = sorted(list(set(d - pd.Timedelta(days=d.weekday()) for d in dates)), reverse=True)
+    camps_df = utils.get_camps_df()
+    camp_dates = pd.to_datetime(camps_df["start_date"].dropna().unique()) if not camps_df.empty else pd.DatetimeIndex([])
+    all_dates = dates.union(camp_dates) if len(dates) > 0 else camp_dates
+    mondays = sorted(list(set(d - pd.Timedelta(days=d.weekday()) for d in all_dates)), reverse=True)
     options = []
     default_idx = 0
     for idx, mon in enumerate(mondays):
@@ -84,14 +87,26 @@ def render_dossier_multi_export(t: dict = None):
     week_labels = [w[1] for w in week_options]
     week_dict = {w[1]: w[0] for w in week_options}
 
+    # Sincronizzazione automatica con la settimana della barra laterale
+    cur_camp = st.session_state.get("global_selected_camp_obj")
+    if cur_camp and "start_date" in cur_camp:
+        camp_s_dt = str(cur_camp["start_date"])[:10]
+        for w_i, (w_mon, _) in enumerate(week_options):
+            if w_mon == camp_s_dt:
+                default_week_idx = w_i
+                break
+
     sel_week_lbl = c_conf2.selectbox(
         "2. Settimana GPS di Riferimento (Week 0)",
         week_labels,
         index=default_week_idx,
-        help="La settimana scelta definisce la Week 0, Week -1 e Week -2 per l'analisi GPS.",
+        help="Sincronizzata automaticamente con la settimana della barra laterale. Definisce la Week 0, Week -1 e Week -2 per l'analisi GPS.",
         key="dossier_week_select",
     )
     ref_mon_str = week_dict[sel_week_lbl]
+    if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_str:
+        import global_state
+        global_state.sync_selected_camp_by_date(ref_mon_str)
 
     include_charts = c_conf3.checkbox(
         "Includi Grafici Plotly",

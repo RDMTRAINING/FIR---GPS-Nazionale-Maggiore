@@ -986,13 +986,23 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
         return
 
     camp_ids = [int(x) for x in c_filt["id"].tolist()]
-    if "camp_sel_active" in st.session_state and st.session_state["camp_sel_active"] not in camp_ids:
-        st.session_state["camp_sel_active"] = camp_ids[0]
+    cur_global_camp = st.session_state.get("global_selected_camp_obj")
+    def_cid = int(cur_global_camp["id"]) if (cur_global_camp and "id" in cur_global_camp and int(cur_global_camp["id"]) in camp_ids) else camp_ids[0]
+
+    if "camp_sel_manage" not in st.session_state or st.session_state["camp_sel_manage"] not in camp_ids:
+        st.session_state["camp_sel_manage"] = def_cid
+
     camp_labels = {
         int(r["id"]): f"{r['start_date_str']} — {r['week_name']} [{r['competition']}] ({int(r.get('total_count') or 0)} atleti)"
         for _, r in c_filt.iterrows()
     }
-    active_cid = fc3.selectbox("Seleziona Settimana Raduno Attiva", camp_ids, format_func=lambda x: camp_labels.get(x, str(x)), key="camp_sel_active")
+    idx_cid = camp_ids.index(st.session_state["camp_sel_manage"]) if st.session_state["camp_sel_manage"] in camp_ids else 0
+    active_cid = fc3.selectbox("Seleziona Settimana Raduno Attiva", camp_ids, index=idx_cid, format_func=lambda x: camp_labels.get(x, str(x)), key="camp_sel_manage")
+
+    # Sincronizza automaticamente con la barra laterale!
+    if cur_global_camp is None or int(cur_global_camp.get("id", -1)) != int(active_cid):
+        import global_state
+        global_state.sync_selected_camp_by_id(active_cid)
 
     active_camp = c_filt[c_filt["id"] == active_cid].iloc[0]
     cp_df = utils.get_camp_players_df(active_cid)
@@ -1266,9 +1276,24 @@ def _render_sub_formazioni(t: dict):
         + " Finishers)"
     )
 
+    # Trova il match selezionato nella barra laterale per impostarlo come predefinito
+    cur_m_dt = str(st.session_state.get("global_selected_match_date") or "")[:10]
+    m_labels_list = lineup_summary["label"].tolist()
+    def_match_idx = 0
+    if cur_m_dt:
+        match_matches = lineup_summary[lineup_summary["date_str"] == cur_m_dt]
+        if not match_matches.empty:
+            target_lbl = match_matches.iloc[0]["label"]
+            if target_lbl in m_labels_list:
+                def_match_idx = m_labels_list.index(target_lbl)
+
     c_sel, c_info = st.columns([2.2, 1.8])
-    sel_lbl = c_sel.selectbox("Seleziona Partita per Formazione (1-23)", lineup_summary["label"].tolist(), index=0, key="lineup_sel_match")
+    sel_lbl = c_sel.selectbox("Seleziona Partita per Formazione (1-23)", m_labels_list, index=def_match_idx, key="lineup_sel_match")
     sel_date = lineup_summary[lineup_summary["label"] == sel_lbl].iloc[0]["date_str"]
+
+    if cur_m_dt != str(sel_date)[:10]:
+        import global_state
+        global_state.sync_selected_match(sel_date)
 
     detail = utils.get_match_lineup_detail(sel_date)
     camp_assoc = detail.get("camp_associated")
