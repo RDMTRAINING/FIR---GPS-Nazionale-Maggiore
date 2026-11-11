@@ -377,63 +377,9 @@ def render_dashboard_home(t: dict):
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
     # --------------------------------------------------------------------------
-    # SEZIONE 4: WORKLOAD DELLA SETTIMANA IN CORSO (SOLO NAZIONALE)
+    # SEZIONE 4: HUB DI NAVIGAZIONE RAPIDA
     # --------------------------------------------------------------------------
-    if not sub_week.empty:
-        st.markdown("### 4. Progressione Carichi della Settimana (Nazionale Italiana)")
-        sub_week_clean = sub_week.copy()
-        sub_week_clean["distance_m_num"] = pd.to_numeric(sub_week_clean.get("distance_m", 0), errors="coerce").fillna(0.0)
-        sub_week_clean["mp_25_num"] = pd.to_numeric(sub_week_clean.get("mp_25_35", 0), errors="coerce").fillna(0.0)
-        sub_week_clean["clean_date"] = sub_week_clean["date_str"].astype(str).str[:10]
-
-        week_grp = sub_week_clean.groupby("clean_date", as_index=False).agg(
-            distanza_tot=("distance_m_num", "sum"),
-            hml_tot=("mp_25_num", "sum"),
-            atleti_count=("player_name", "nunique"),
-        ).sort_values("clean_date")
-
-        # Verifica se ci sono dati con volume > 0
-        if not week_grp.empty and (week_grp["distanza_tot"] > 0).any():
-            def _fmt_day(d_s):
-                try:
-                    dt = pd.to_datetime(d_s)
-                    giorni = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
-                    return f"{dt.strftime('%d/%m')} ({giorni[dt.weekday()]})"
-                except Exception:
-                    return str(d_s)
-
-            week_grp["date_label"] = week_grp["clean_date"].apply(_fmt_day)
-
-            fig_w = go.Figure()
-            fig_w.add_trace(
-                go.Bar(
-                    x=week_grp["date_label"],
-                    y=week_grp["distanza_tot"],
-                    name="Volume Totale Squadra (m)",
-                    marker_color="#0066B2",
-                    opacity=0.90,
-                    hovertemplate="<b>%{x}</b><br>Volume: %{y:,.0f} m<extra></extra>",
-                )
-            )
-            fig_w.update_layout(
-                height=260,
-                margin=dict(l=40, r=30, t=20, b=40),
-                plot_bgcolor="#F8FAFC",
-                paper_bgcolor="#FFFFFF",
-                font=dict(family="Inter", size=11),
-                yaxis=dict(title="Metri Percorsi (Squadra)", gridcolor="#E2E8F0"),
-                xaxis=dict(type="category", title="Data Seduta", gridcolor="#E2E8F0"),
-            )
-            st.plotly_chart(fig_w, use_container_width=True)
-        else:
-            st.info(f"ℹ️ Nessun volume GPS registrato per le sedute della settimana ({week_range}).")
-    else:
-        st.info(f"ℹ️ Nessun dato GPS archiviato per la settimana selezionata ({week_range}).")
-
-    # --------------------------------------------------------------------------
-    # SEZIONE 5: HUB DI NAVIGAZIONE RAPIDA
-    # --------------------------------------------------------------------------
-    st.markdown("### 5. Sezioni Principali della Piattaforma")
+    st.markdown("### 4. Sezioni Principali della Piattaforma")
     n1, n2, n3, n4 = st.columns(4)
 
     with n1:
