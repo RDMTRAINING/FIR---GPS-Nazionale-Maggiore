@@ -7,6 +7,7 @@ from config import render_page_header, render_tab_navigation, render_navigation_
 import utils
 import global_state
 from pdf_generator import crea_pdf_cruscotto_fir, crea_pdf_schieramento_campo, slugify_name
+from timeline_manager import get_session_timeline
 
 
 ROLE_ORDER_MAP = {
@@ -2470,6 +2471,7 @@ def render_analisi_sessione_giornata(t: dict):
         "fig_tq": fig_tq_comp,
         "rankings": rankings_dict,
         "narrative": sess_narrative,
+        "timeline_blocks": get_session_timeline(meta.get("session_name", "")),
     }
 
     pitch_bundle = _build_pitch_bundle_for_pdf(hist_df, match_info, meta)

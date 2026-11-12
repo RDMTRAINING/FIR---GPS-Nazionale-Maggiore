@@ -1369,6 +1369,81 @@ class RugbyPitchFlowable(Flowable):
         self.canv.restoreState()
 
 
+class TrainingTimelineFlowable(Flowable):
+    """Disegna la timeline dell'allenamento con blocchi colorati e legenda fedele al layout FIR."""
+    def __init__(self, blocks, width=808, height=44):
+        super().__init__()
+        self.blocks = blocks or []
+        self.width = width
+        self.height = height
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+
+    def draw(self):
+        canv = self.canv
+        if not self.blocks:
+            return
+        total_dur = sum(float(b.get("duration", 0)) for b in self.blocks)
+        if total_dur <= 0:
+            return
+
+        from timeline_manager import get_block_color
+
+        canv.saveState()
+        # Etichetta 'MINUTI' sulla sinistra
+        canv.setFont("Helvetica-Bold", 8.5)
+        canv.setFillColor(colors.HexColor("#0F172A"))
+        canv.drawString(2, 21, "MINUTI")
+
+        x_start = 52
+        bar_w = self.width - x_start - 2
+        bar_y = 15
+        bar_h = 22
+
+        canv.setStrokeColor(colors.HexColor("#0F172A"))
+        canv.setLineWidth(0.6)
+
+        curr_x = x_start
+        legend_items = []
+
+        for b in self.blocks:
+            name = str(b.get("name", "")).strip()
+            dur = float(b.get("duration", 0))
+            dur_str = f"{dur:g}".replace(".", ",")
+            w = (dur / total_dur) * bar_w
+            hex_c = get_block_color(name)
+
+            # Rettangolo blocco
+            canv.setFillColor(colors.HexColor(hex_c))
+            canv.rect(curr_x, bar_y, w, bar_h, fill=1, stroke=1)
+
+            # Testo durata all'interno del blocco
+            canv.setFillColor(colors.HexColor("#000000"))
+            fsize = 8.5 if w >= 22 else 7.0 if w >= 13 else 5.8
+            canv.setFont("Helvetica-Bold", fsize)
+            if w >= 8:
+                canv.drawCentredString(curr_x + w / 2.0, bar_y + (bar_h - fsize) / 2.0 + 1, dur_str)
+
+            legend_items.append((name, hex_c))
+            curr_x += w
+
+        # Legenda orizzontale sotto la barra
+        leg_x = x_start
+        leg_y = 2
+        canv.setFont("Helvetica-Bold", 6.6)
+        for name, hex_c in legend_items:
+            canv.setFillColor(colors.HexColor(hex_c))
+            canv.rect(leg_x, leg_y + 1, 6.5, 6.5, fill=1, stroke=1)
+            canv.setFillColor(colors.HexColor("#0F172A"))
+            canv.drawString(leg_x + 8.5, leg_y + 1.5, name)
+            str_w = canv.stringWidth(name, "Helvetica-Bold", 6.6)
+            leg_x += 8.5 + str_w + 8
+            if leg_x > self.width - 25:
+                break
+        canv.restoreState()
+
+
 def _build_densita_individual_rl_table(df_dens: pd.DataFrame) -> Table:
     headers = ["Giocatore", "Ruolo", "Min", "HML (m)", "HML/min", "% Match HML", "HSR (m)", "HSR/min", "% Match HSR", "V max", "% Vmax"]
     col_widths = [168, 75, 45, 60, 60, 65, 60, 60, 65, 75, 75]  # sum = 808
@@ -1833,8 +1908,8 @@ def crea_pdf_cruscotto_fir(
                 elements.append(Spacer(1, 6))
 
             if comp_bundle.get("fig_av") is not None and comp_bundle.get("fig_tq") is not None:
-                img_av = fig_to_rl_image(comp_bundle["fig_av"], width=398, height=255)
-                img_tq = fig_to_rl_image(comp_bundle["fig_tq"], width=398, height=255)
+                img_av = fig_to_rl_image(comp_bundle["fig_av"], width=398, height=220)
+                img_tq = fig_to_rl_image(comp_bundle["fig_tq"], width=398, height=220)
                 t_charts = Table([[img_av, img_tq]], colWidths=[404, 404])
                 t_charts.setStyle(TableStyle([
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -1844,6 +1919,15 @@ def crea_pdf_cruscotto_fir(
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
                 ]))
                 elements.append(t_charts)
+                elements.append(Spacer(1, 4))
+
+            # Timeline dell'allenamento (sotto i grafici della prima pagina)
+            tl_blocks = comp_bundle.get("timeline_blocks")
+            if tl_blocks is None:
+                from timeline_manager import get_session_timeline
+                tl_blocks = get_session_timeline(meta.get("session_name", ""))
+            if tl_blocks:
+                elements.append(TrainingTimelineFlowable(tl_blocks, width=808, height=44))
 
         # Foglio 2: Top Rankings con istogrammi orizzontali colorati
         elements.append(PageBreak())
