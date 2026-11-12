@@ -1215,10 +1215,10 @@ def _render_tab_gestione(t: dict):
     render_html("""
         <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:20px; box-shadow:0 2px 8px rgba(0,0,0,0.04); margin-bottom:22px; margin-top:20px;">
             <div style="font-size:1.15rem; font-weight:800; color:#0F172A; margin-bottom:4px;">
-                🗂️ Registro Sessioni GymAware Presenti nel Database
+                🗂️ Registro Sessioni & Caricamenti GymAware (VBT)
             </div>
             <div style="font-size:0.75rem; color:#64748B;">
-                Panoramica per data e possibilità di eliminare singole giornate o ripristinare il file seed originale
+                Riepilogo puntuale degli ultimi caricamenti, metriche per sessione e gestione completa dei dati archiviati nel database SQLite
             </div>
         </div>
     """)
@@ -1227,22 +1227,208 @@ def _render_tab_gestione(t: dict):
     if all_data.empty:
         st.info("Nessuna sessione GymAware presente nel database.")
     else:
+        # Metriche generali del database
+        db_overview = utils.get_gymaware_database_overview()
+        last_up_ts = db_overview.get("last_upload_ts", "")
+        if last_up_ts:
+            try:
+                from datetime import datetime as dt_cls
+                ts_obj = dt_cls.strptime(str(last_up_ts)[:19], "%Y-%m-%d %H:%M:%S")
+                last_up_str = ts_obj.strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                last_up_str = str(last_up_ts)[:16]
+        else:
+            last_up_str = "N/D"
+
+        # 1. KPI RIBBON GENERALE
+        kpi_overview_html = textwrap.dedent(f"""
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:14px; margin-bottom:22px;">
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+                    🗃️ Record Totali
+                </div>
+                <div style="font-size:2.1rem; font-weight:900; color:#0F172A; line-height:1.1;">
+                    {db_overview['total_rows']:,}
+                </div>
+                <div style="font-size:0.75rem; color:#94A3B8; margin-top:4px;">
+                    <b>{db_overview['total_reps']:,}</b> reps &bull; <b>{db_overview['total_sets']:,}</b> serie
+                </div>
+            </div>
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+                    📅 Sessioni Archiviate
+                </div>
+                <div style="font-size:2.1rem; font-weight:900; color:#0066B2; line-height:1.1;">
+                    {db_overview['total_sessions']}
+                </div>
+                <div style="font-size:0.75rem; color:#94A3B8; margin-top:4px;">
+                    Giornate distinte di test/allenamento VBT
+                </div>
+            </div>
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+                    👥 Atleti Monitorati
+                </div>
+                <div style="font-size:2.1rem; font-weight:900; color:#059669; line-height:1.1;">
+                    {db_overview['total_athletes']}
+                </div>
+                <div style="font-size:0.75rem; color:#94A3B8; margin-top:4px;">
+                    Giocatori censiti nel database
+                </div>
+            </div>
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem; font-weight:700; color:#64748B; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+                    ⏱️ Ultimo Caricamento Batch
+                </div>
+                <div style="font-size:1.45rem; font-weight:900; color:#D97706; line-height:1.2; margin-top:4px;">
+                    {last_up_str}
+                </div>
+                <div style="font-size:0.75rem; color:#94A3B8; margin-top:4px;">
+                    +{db_overview['last_batch_rows']:,} righe &bull; {db_overview['last_batch_athletes']} atleti
+                </div>
+            </div>
+        </div>
+        """)
+        render_html(kpi_overview_html)
+
+        # 2. CARD DETTAGLIO ULTIMI CARICAMENTI PRESENTI NEL DATABASE
+        recent_sessions = utils.get_gymaware_recent_sessions_summary(limit=4)
+        if recent_sessions:
+            render_html("""
+                <div style="font-size:1.0rem; font-weight:800; color:#002B49; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+                    <span>⚡ Ultime Sessioni Caricate nel Database</span>
+                    <span style="font-size:0.72rem; font-weight:600; color:#64748B; background:#F1F5F9; border-radius:10px; padding:2px 8px;">Riepilogo Rapido</span>
+                </div>
+            """)
+
+            cards_html_list = []
+            for idx, s in enumerate(recent_sessions):
+                is_latest = (idx == 0)
+                badge_bg = "#ECFDF5" if is_latest else "#EFF6FF"
+                badge_color = "#059669" if is_latest else "#0066B2"
+                badge_text = "🟢 Più Recente" if is_latest else f"Seduta #{idx + 1}"
+                top_border = "#0066B2" if is_latest else "#94A3B8"
+
+                ex_items = [e.strip() for e in s["exercises"].split(",") if e.strip()]
+                ex_disp = ", ".join(ex_items[:3])
+                if len(ex_items) > 3:
+                    ex_disp += f" (+{len(ex_items) - 3})"
+
+                up_time_str = s['last_uploaded_at'][:16] if s['last_uploaded_at'] else "N/D"
+
+                card_box = f"""
+                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-top:4px solid {top_border}; border-radius:14px; padding:16px; box-shadow:0 2px 8px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between;">
+                    <div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                            <div style="font-size:1.08rem; font-weight:900; color:#002B49;">
+                                📅 {s['date']}
+                            </div>
+                            <span style="background:{badge_bg}; color:{badge_color}; font-size:0.68rem; font-weight:700; padding:3px 8px; border-radius:10px;">
+                                {badge_text}
+                            </span>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:8px 6px; margin-bottom:12px; text-align:center;">
+                            <div>
+                                <div style="font-size:0.65rem; color:#64748B; font-weight:700; text-transform:uppercase;">Atleti</div>
+                                <div style="font-size:1.15rem; font-weight:900; color:#0F172A;">{s['n_athletes']}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.65rem; color:#64748B; font-weight:700; text-transform:uppercase;">Serie</div>
+                                <div style="font-size:1.15rem; font-weight:900; color:#0066B2;">{s['n_sets']}</div>
+                            </div>
+                            <div>
+                                <div style="font-size:0.65rem; color:#64748B; font-weight:700; text-transform:uppercase;">Reps</div>
+                                <div style="font-size:1.15rem; font-weight:900; color:#059669;">{s['n_reps']}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:0.75rem; color:#334155; line-height:1.5; margin-bottom:10px;">
+                            <div>⚡ Vel. Media: <b style="color:#0066B2;">{s['avg_mean_vel']:.2f} m/s</b> &bull; Picco: <b>{s['max_vel']:.2f} m/s</b></div>
+                            <div>🎯 Carico Max: <b style="color:#D97706;">{s['max_kg']:.1f} kg</b></div>
+                        </div>
+                        <div style="font-size:0.72rem; color:#64748B; background:#F1F5F9; border-radius:6px; padding:6px 8px; margin-bottom:8px;">
+                            <b style="color:#0F172A;">Esercizi:</b> {ex_disp if ex_disp else 'N/D'}
+                        </div>
+                    </div>
+                    <div style="font-size:0.68rem; color:#94A3B8; text-align:right; border-top:1px dashed #E2E8F0; padding-top:6px; margin-top:6px;">
+                        🕒 Caricato: {up_time_str}
+                    </div>
+                </div>
+                """
+                cards_html_list.append(card_box)
+
+            cards_grid_html = f"""
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap:14px; margin-bottom:22px;">
+                {''.join(cards_html_list)}
+            </div>
+            """
+            render_html(cards_grid_html)
+
+        # 3. STORICO BATCH IMPORTAZIONI CSV (COLLAPSIBLE)
+        batches = utils.get_gymaware_batches_summary(limit=10)
+        if batches:
+            with st.expander("📦 Dettaglio Storico Caricamenti Batch (File CSV Importati)", expanded=False):
+                df_batches = pd.DataFrame(batches).rename(columns={
+                    "created_at": "Data/Ora Importazione",
+                    "n_rows": "Righe Importate",
+                    "n_dates": "Sessioni Coperte",
+                    "n_athletes": "Atleti Coinvolti",
+                    "n_sets": "Serie Totali",
+                    "n_reps": "Ripetizioni",
+                    "date_range": "Intervallo Date Sedute",
+                })
+                st.dataframe(df_batches, use_container_width=True, hide_index=True)
+
+        # 4. TABELLA CRONOLOGICA COMPLETA DELLE SESSIONI
+        render_html("""
+            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:16px; margin-bottom:8px;">
+                <div style="font-size:1.0rem; font-weight:800; color:#002B49;">
+                    📋 Tutte le Sessioni Registrate nel Database
+                </div>
+                <div style="font-size:0.75rem; color:#64748B;">
+                    💡 Ordinata per data decrescente. Clicca sull'intestazione <b>'Data'</b> per invertire l'ordine cronologico in modo puntuale.
+                </div>
+            </div>
+        """)
+
         date_groups = []
-        for d, g in all_data.groupby("date", sort=False):
+        for d in utils.get_gymaware_dates():
+            g = all_data[all_data["date"] == d]
+            if g.empty:
+                continue
             ex_list = ", ".join(g["exercise"].dropna().unique().tolist()[:4])
             if len(g["exercise"].dropna().unique()) > 4:
                 ex_list += "..."
+            d_dt = pd.to_datetime(d, format="%d/%m/%Y", errors="coerce")
             date_groups.append({
-                "Data": d,
+                "Data": d_dt,
+                "Data_str": d,
                 "Esercizi": ex_list,
                 "Atleti": g["athlete_name"].nunique(),
                 "Serie": g["set_id"].nunique(),
-                "Ripetizioni": len(g[g["row_type"] == "Rep"]),
+                "Ripetizioni": int((g["row_type"] == "Rep").sum()),
                 "Righe Totali": len(g),
             })
 
         df_summary_dates = pd.DataFrame(date_groups)
-        st.dataframe(df_summary_dates, use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_summary_dates[["Data", "Esercizi", "Atleti", "Serie", "Ripetizioni", "Righe Totali"]],
+            column_config={
+                "Data": st.column_config.DateColumn(
+                    "Data",
+                    format="DD/MM/YYYY",
+                    help="Data della sessione GymAware (ordinabile cronologicamente in modo puntuale)",
+                ),
+                "Esercizi": st.column_config.TextColumn("Esercizi Principali"),
+                "Atleti": st.column_config.NumberColumn("Atleti Coinvolti", format="%d"),
+                "Serie": st.column_config.NumberColumn("Serie Totali", format="%d"),
+                "Ripetizioni": st.column_config.NumberColumn("Reps Valide", format="%d"),
+                "Righe Totali": st.column_config.NumberColumn("Righe Record", format="%d"),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        del_date_options = df_summary_dates["Data_str"].tolist()
 
         st.markdown("<hr style='border-color:#E2E8F0; margin:20px 0;'>", unsafe_allow_html=True)
 
@@ -1272,7 +1458,7 @@ def _render_tab_gestione(t: dict):
             with col_d1:
                 date_to_del = st.selectbox(
                     "Seleziona la data da eliminare per tutta la squadra",
-                    df_summary_dates["Data"].tolist(),
+                    del_date_options,
                     key="gymaware_del_date_all",
                 )
             with col_d2:
@@ -1287,7 +1473,7 @@ def _render_tab_gestione(t: dict):
             with col_d1:
                 date_to_del = st.selectbox(
                     "1. Seleziona la data",
-                    df_summary_dates["Data"].tolist(),
+                    del_date_options,
                     key="gymaware_del_date_single",
                 )
             with col_d2:
@@ -1326,7 +1512,7 @@ def _render_tab_gestione(t: dict):
         with ed_c1:
             edit_date = st.selectbox(
                 "📅 Seleziona Data Sessione da Modificare",
-                df_summary_dates["Data"].tolist(),
+                del_date_options,
                 key="gymaware_edit_date_sel",
             )
         with ed_c2:

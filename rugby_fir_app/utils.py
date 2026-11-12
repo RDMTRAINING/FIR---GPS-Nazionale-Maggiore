@@ -4834,9 +4834,24 @@ def save_gymaware_from_df(df: pd.DataFrame, conn=None, replace_all=False) -> int
 def _format_gymaware_date_to_iso(d_val) -> str:
     if not d_val:
         return ""
+    if hasattr(d_val, "strftime"):
+        return d_val.strftime("%Y-%m-%d")
     s = str(d_val).strip()
     if len(s) == 10 and s[2] == "/" and s[5] == "/":
         return f"{s[6:10]}-{s[3:5]}-{s[0:2]}"
+    return s
+
+
+def _normalize_gymaware_date_str(d_val) -> str:
+    """Normalizza un valore data in stringa 'DD/MM/YYYY' usata come chiave in SQLite."""
+    if not d_val:
+        return ""
+    if hasattr(d_val, "strftime"):
+        return d_val.strftime("%d/%m/%Y")
+    s = str(d_val).strip()
+    # Se arriva in formato YYYY-MM-DD o YYYY-MM-DD HH:MM:SS
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return f"{s[8:10]}/{s[5:7]}/{s[0:4]}"
     return s
 
 
@@ -4867,8 +4882,9 @@ def get_gymaware_df(
         query += " AND (substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) BETWEEN ? AND ?"
         params.extend([s_iso, e_iso])
     elif date and date != "Tutte le date":
+        norm_d = _normalize_gymaware_date_str(date)
         query += " AND date = ?"
-        params.append(date)
+        params.append(norm_d)
     if row_type:
         if isinstance(row_type, (list, tuple)):
             placeholders = ",".join(["?"] * len(row_type))
@@ -4878,7 +4894,7 @@ def get_gymaware_df(
             query += " AND row_type = ?"
             params.append(row_type)
 
-    query += " ORDER BY date DESC, time DESC, set_id ASC, rep_number ASC"
+    query += " ORDER BY (substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) DESC, time DESC, set_id ASC, rep_number ASC"
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
@@ -5107,43 +5123,183 @@ def get_gymaware_dates() -> list:
     return [r[0] for r in rows]
 
 
-def get_gymaware_athletes_for_date(date_str: str) -> list:
+def get_gymaware_athletes_for_date(date_str) -> list:
     """Ritorna gli atleti con misurazioni registrate in una specifica data."""
     init_gymaware_db()
     conn = get_gymaware_conn()
+    norm_d = _normalize_gymaware_date_str(date_str)
     rows = conn.execute(
         "SELECT DISTINCT athlete_name FROM gymaware_data WHERE date = ? ORDER BY athlete_name ASC",
-        (date_str,),
+        (norm_d,),
     ).fetchall()
     conn.close()
     return [r[0] for r in rows]
 
 
-def delete_gymaware_date(date_str: str) -> int:
+def delete_gymaware_date(date_str) -> int:
     """Elimina tutte le righe di tutti gli atleti per una specifica data."""
     init_gymaware_db()
     conn = get_gymaware_conn()
+    norm_d = _normalize_gymaware_date_str(date_str)
     cur = conn.cursor()
-    cur.execute("DELETE FROM gymaware_data WHERE date = ?", (date_str,))
+    cur.execute("DELETE FROM gymaware_data WHERE date = ?", (norm_d,))
     conn.commit()
     count = cur.rowcount
     conn.close()
     return count
 
 
-def delete_gymaware_athlete_date(athlete_name: str, date_str: str) -> int:
+def delete_gymaware_athlete_date(athlete_name: str, date_str) -> int:
     """Elimina tutte le righe di un singolo atleta in una specifica data."""
     init_gymaware_db()
     conn = get_gymaware_conn()
+    norm_d = _normalize_gymaware_date_str(date_str)
     cur = conn.cursor()
     cur.execute(
         "DELETE FROM gymaware_data WHERE athlete_name = ? AND date = ?",
-        (athlete_name, date_str),
+        (athlete_name, norm_d),
     )
     conn.commit()
     count = cur.rowcount
     conn.close()
     return count
+
+
+def get_gymaware_database_overview() -> dict:
+    """
+    Ritorna le metriche globali del database GymAware:
+    totale record, totale sessioni/date, atleti unici, totale serie, totale ripetizioni,
+    ultimo batch di importazione (data/ora, numero righe, atleti).
+    """
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+
+    overall = cur.execute("""
+        SELECT 
+            COUNT(*) as total_rows,
+            COUNT(DISTINCT date) as total_sessions,
+            COUNT(DISTINCT athlete_name) as total_athletes,
+            COUNT(DISTINCT set_id) as total_sets,
+            SUM(CASE WHEN row_type = 'Rep' THEN 1 ELSE 0 END) as total_reps,
+            MAX(created_at) as last_upload_ts
+        FROM gymaware_data
+    """).fetchone()
+
+    last_upload_ts = overall[5] if overall else None
+    last_batch_rows = 0
+    last_batch_athletes = 0
+    if last_upload_ts:
+        batch_stat = cur.execute("""
+            SELECT COUNT(*), COUNT(DISTINCT athlete_name)
+            FROM gymaware_data
+            WHERE created_at = ?
+        """, (last_upload_ts,)).fetchone()
+        if batch_stat:
+            last_batch_rows = batch_stat[0]
+            last_batch_athletes = batch_stat[1]
+
+    conn.close()
+
+    return {
+        "total_rows": overall[0] if overall else 0,
+        "total_sessions": overall[1] if overall else 0,
+        "total_athletes": overall[2] if overall else 0,
+        "total_sets": overall[3] if overall else 0,
+        "total_reps": overall[4] if overall and overall[4] else 0,
+        "last_upload_ts": last_upload_ts,
+        "last_batch_rows": last_batch_rows,
+        "last_batch_athletes": last_batch_athletes,
+    }
+
+
+def get_gymaware_recent_sessions_summary(limit: int = 4) -> list:
+    """
+    Ritorna le ultime sessioni di allenamento GymAware presenti nel database,
+    ordinate cronologicamente dalla più recente alla meno recente.
+    """
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+
+    rows = cur.execute(f"""
+        SELECT 
+            date,
+            substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2) as iso_d,
+            COUNT(DISTINCT athlete_name) as n_ath,
+            COUNT(DISTINCT set_id) as n_sets,
+            SUM(CASE WHEN row_type = 'Rep' THEN 1 ELSE 0 END) as n_reps,
+            COUNT(*) as total_rows,
+            MAX(total_weight) as max_kg,
+            MAX(peak_velocity) as max_vel,
+            AVG(CASE WHEN row_type = 'Rep' AND mean_velocity > 0 THEN mean_velocity END) as avg_mean_vel,
+            GROUP_CONCAT(DISTINCT exercise) as exercises,
+            MAX(created_at) as last_uploaded_at
+        FROM gymaware_data
+        WHERE date IS NOT NULL AND date != ''
+        GROUP BY date
+        ORDER BY iso_d DESC
+        LIMIT {limit}
+    """).fetchall()
+    conn.close()
+
+    results = []
+    for r in rows:
+        results.append({
+            "date": r[0],
+            "iso_date": r[1],
+            "n_athletes": r[2],
+            "n_sets": r[3],
+            "n_reps": r[4] or 0,
+            "total_rows": r[5],
+            "max_kg": r[6] or 0.0,
+            "max_vel": r[7] or 0.0,
+            "avg_mean_vel": r[8] or 0.0,
+            "exercises": r[9] or "",
+            "last_uploaded_at": r[10] or "",
+        })
+    return results
+
+
+def get_gymaware_batches_summary(limit: int = 10) -> list:
+    """
+    Ritorna lo storico dei batch di importazione CSV registrati nel database.
+    """
+    init_gymaware_db()
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
+
+    rows = cur.execute(f"""
+        SELECT 
+            created_at,
+            COUNT(*) as n_rows,
+            COUNT(DISTINCT date) as n_dates,
+            COUNT(DISTINCT athlete_name) as n_ath,
+            COUNT(DISTINCT set_id) as n_sets,
+            SUM(CASE WHEN row_type = 'Rep' THEN 1 ELSE 0 END) as n_reps,
+            MIN(substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) as min_iso,
+            MAX(substr(date, 7, 4) || '-' || substr(date, 4, 2) || '-' || substr(date, 1, 2)) as max_iso
+        FROM gymaware_data
+        GROUP BY created_at
+        ORDER BY created_at DESC
+        LIMIT {limit}
+    """).fetchall()
+    conn.close()
+
+    batches = []
+    for r in rows:
+        min_d = f"{r[6][8:10]}/{r[6][5:7]}/{r[6][0:4]}" if r[6] and len(r[6]) == 10 else r[6]
+        max_d = f"{r[7][8:10]}/{r[7][5:7]}/{r[7][0:4]}" if r[7] and len(r[7]) == 10 else r[7]
+        batches.append({
+            "created_at": r[0],
+            "n_rows": r[1],
+            "n_dates": r[2],
+            "n_athletes": r[3],
+            "n_sets": r[4],
+            "n_reps": r[5] or 0,
+            "date_range": f"{min_d} - {max_d}" if min_d != max_d else min_d,
+        })
+    return batches
 
 
 def update_gymaware_rows(df_edited: pd.DataFrame) -> int:
