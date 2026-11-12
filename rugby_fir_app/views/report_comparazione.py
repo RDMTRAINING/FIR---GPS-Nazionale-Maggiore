@@ -12,11 +12,7 @@ from views.home import SESSION_TYPE_BASELINES
 from pdf_generator import crea_pdf_cruscotto_fir, slugify_name
 from timeline_manager import (
     get_session_timeline,
-    save_session_timeline,
     build_timeline_plotly_fig,
-    CANONICAL_BLOCK_NAMES,
-    get_block_color,
-    DEFAULT_261111_BLOCKS,
 )
 
 
@@ -617,27 +613,38 @@ def _render_tab_report_seduta_story(df_full: pd.DataFrame, status_map: dict, typ
 
         st.markdown(
             f"""
-            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:16px; margin-bottom:4px; flex-wrap:wrap; gap:8px;">
-                <div>
-                    <span style="font-size:0.72rem; font-weight:800; color:#0066B2; text-transform:uppercase; letter-spacing:0.08em;">
-                        STRUTTURA CRONOLOGICA SEDUTA
-                    </span>
-                    <h4 style="margin:2px 0 0 0; font-size:1.15rem; font-weight:800; color:#0F172A;">
-                        ⏱️ Timeline dell'Allenamento
-                    </h4>
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:16px 20px 8px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.03); margin-top:16px; margin-bottom:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="width:4px; height:24px; background:linear-gradient(180deg, #002B49 0%, #0066B2 100%); border-radius:2px;"></div>
+                        <div>
+                            <span style="font-size:0.68rem; font-weight:800; color:#0066B2; text-transform:uppercase; letter-spacing:0.08em;">
+                                STRUTTURA CRONOLOGICA SEDUTA
+                            </span>
+                            <div style="font-size:1.08rem; font-weight:800; color:#0F172A;">
+                                ⏱️ Timeline dell'Allenamento
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; font-size:0.75rem;">
+                        <span style="background:#F1F5F9; color:#0F172A; border:1px solid #E2E8F0; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            ⏱️ Durata: <b>{total_tl_min:g} min</b>
+                        </span>
+                        <span style="background:#EFF6FF; color:#0066B2; border:1px solid #BFDBFE; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            🏃 Attività: <b>{tot_work_min:g} min</b> ({(tot_work_min/total_tl_min)*100:.0f}%)
+                        </span>
+                        <span style="background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            ☕ Pause ({n_pause}): <b>{tot_pause_min:g} min</b>
+                        </span>
+                    </div>
                 </div>
-                <div style="font-size:0.80rem; font-weight:700; color:#475569; background:#F8FAFC; border:1px solid #E2E8F0; padding:4px 12px; border-radius:6px;">
-                    Durata Totale: <b style="color:#0F172A;">{total_tl_min:g} min</b> &nbsp;|&nbsp;
-                    Attività: <b style="color:#0284C7;">{tot_work_min:g} min</b> &nbsp;|&nbsp;
-                    Pause ({n_pause}): <b style="color:#64748B;">{tot_pause_min:g} min</b>
-                </div>
-            </div>
             """,
             unsafe_allow_html=True,
         )
 
-        fig_timeline = build_timeline_plotly_fig(timeline_blocks, width=1100, height=135)
+        fig_timeline = build_timeline_plotly_fig(timeline_blocks, width=1100, height=140)
         st.plotly_chart(fig_timeline, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -718,114 +725,7 @@ def _render_tab_report_seduta_story(df_full: pd.DataFrame, status_map: dict, typ
             mime="text/csv",
         )
 
-    # ==========================================================================
-    # 5. GESTIONE TABELLARE DELLA TIMELINE DELL'ALLENAMENTO
-    # ==========================================================================
-    st.markdown("---")
-    st.markdown(
-        f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-            <div>
-                <span style="font-size:0.75rem; font-weight:800; color:#D4AF37; text-transform:uppercase; letter-spacing:0.08em;">
-                    CONFIGURAZIONE CRONOLOGICA ESERCIZI & PAUSE
-                </span>
-                <h3 style="margin:2px 0 0 0; font-size:1.35rem; font-weight:800; color:#0F172A;">
-                    ⏱️ Tabella Timeline dell'Allenamento ({cur_session_name})
-                </h3>
-            </div>
-            <span style="font-size:0.80rem; color:#64748B;">
-                Modifica le durate o aggiungi blocchi: i colori vengono assegnati automaticamente per nome.
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    cur_blocks = get_session_timeline(cur_session_name)
-
-    # Preparazione DataFrame per st.data_editor
-    editor_rows = [
-        {
-            "Ordine": i + 1,
-            "Nome Blocco": b["name"],
-            "Durata (min)": float(b["duration"]),
-        }
-        for i, b in enumerate(cur_blocks)
-    ]
-    df_editor = pd.DataFrame(editor_rows) if editor_rows else pd.DataFrame(columns=["Ordine", "Nome Blocco", "Durata (min)"])
-
-    c_ed_t, c_ed_h = st.columns([3, 1])
-    with c_ed_t:
-        edited_tl = st.data_editor(
-            df_editor,
-            num_rows="dynamic",
-            use_container_width=True,
-            key=f"data_editor_tl_{cur_session_name}",
-            column_config={
-                "Ordine": st.column_config.NumberColumn("N°", width="small", disabled=True),
-                "Nome Blocco": st.column_config.TextColumn(
-                    "Nome Blocco / Esercizio",
-                    help="Nomi principali con colori dedicati: Attivazione, Drill, Collettivo, Contatto, Reparto, Pausa, Clarity. Puoi digitare anche nuove voci.",
-                    required=True,
-                ),
-                "Durata (min)": st.column_config.NumberColumn(
-                    "Durata (min)",
-                    help="Durata in minuti (es. 15, 3, 11.5)",
-                    min_value=0.5,
-                    max_value=240.0,
-                    step=0.5,
-                    format="%.1f min",
-                    required=True,
-                ),
-            },
-            hide_index=True,
-        )
-
-    with c_ed_h:
-        st.markdown("<div style='font-size:0.82rem; font-weight:800; color:#002B49; margin-bottom:6px;'>Palette Colori Automatica</div>", unsafe_allow_html=True)
-        col_legend_html = "<div style='display:flex; flex-direction:column; gap:4px; font-size:0.75rem; background:#F8FAFC; border:1px solid #E2E8F0; padding:10px; border-radius:8px;'>"
-        for c_name in CANONICAL_BLOCK_NAMES:
-            c_hex = get_block_color(c_name)
-            col_legend_html += f"<div style='display:flex; align-items:center; gap:8px;'><span style='display:inline-block; width:14px; height:14px; border-radius:3px; background:{c_hex}; border:1px solid #0F172A;'></span><span style='font-weight:700; color:#1E293B;'>{c_name}</span></div>"
-        col_legend_html += "<div style='color:#64748B; font-size:0.70rem; margin-top:4px;'>* Nuove voci ricevono colori coordinati costanti.</div></div>"
-        st.markdown(col_legend_html, unsafe_allow_html=True)
-
-    # Pulsanti di azione per salvare o ripristinare
-    b_col1, b_col2, b_col3, b_col4 = st.columns([1.5, 1.2, 1.2, 1.2])
-    with b_col1:
-        if st.button("💾 Salva Timeline per questa Seduta", type="primary", use_container_width=True, key=f"btn_save_tl_{cur_session_name}"):
-            new_blocks = []
-            if edited_tl is not None and not edited_tl.empty:
-                for _, r in edited_tl.iterrows():
-                    n = str(r.get("Nome Blocco", "")).strip()
-                    try:
-                        d = float(r.get("Durata (min)", 0))
-                    except (ValueError, TypeError):
-                        d = 0.0
-                    if n and d > 0:
-                        new_blocks.append({"name": n, "duration": round(d, 1)})
-            save_session_timeline(cur_session_name, new_blocks)
-            st.success("✅ Timeline dell'allenamento salvata con successo! Aggiornata in pagina e nel PDF.")
-            st.rerun()
-
-    with b_col2:
-        if st.button("🔄 Ripristina Default FIR", use_container_width=True, key=f"btn_reset_tl_{cur_session_name}"):
-            save_session_timeline(cur_session_name, [dict(b) for b in DEFAULT_261111_BLOCKS])
-            st.info("Ripristinata sequenza timeline di riferimento FIR.")
-            st.rerun()
-
-    with b_col3:
-        if st.button("☕ Inserisci Pausa (3 min)", use_container_width=True, key=f"btn_add_pausa_tl_{cur_session_name}"):
-            curr = list(cur_blocks)
-            curr.append({"name": "Pausa", "duration": 3.0})
-            save_session_timeline(cur_session_name, curr)
-            st.rerun()
-
-    with b_col4:
-        if st.button("🗑️ Svuota Timeline", use_container_width=True, key=f"btn_clear_tl_{cur_session_name}"):
-            save_session_timeline(cur_session_name, [])
-            st.warning("Timeline svuotata per questa seduta.")
-            st.rerun()
 
 
 def _render_single_ranking_card(title: str, items: list, unit: str, bar_color: str):

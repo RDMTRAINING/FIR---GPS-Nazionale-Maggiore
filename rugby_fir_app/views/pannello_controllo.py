@@ -10,7 +10,7 @@ import views.admin_utenti
 def render_pannello_controllo(t: dict):
     render_page_header(
         "Pannello di Controllo Organizzativo FIR",
-        "Gestione Roster • Foto & Immagini • Atleti Raduno • Storico Partite • Formazione Match • Tipologie Sessioni • Gestione Utenti & Accessi",
+        "Gestione Roster • Foto & Immagini • Atleti Raduno • Storico Partite • Formazione Match • Tipologie Sessioni • Timeline Allenamenti • Gestione Utenti & Accessi",
         "bi-sliders",
     )
 
@@ -21,6 +21,7 @@ def render_pannello_controllo(t: dict):
         {"id": "partite", "title": "Storico Partite", "desc": "Calendario match, risultati e avversari", "icon": "bi-calendar-event"},
         {"id": "formazioni", "title": "Formazione Match", "desc": "Formazione 1-15 titolari e 16-23 finishers", "icon": "bi-shield-check"},
         {"id": "tipologie_sessioni", "title": "Tipologie Sessioni", "desc": "Categorizzazione sedute per benchmark storici", "icon": "bi-tags"},
+        {"id": "timeline_allenamenti", "title": "Timeline Allenamenti", "desc": "Struttura cronologica a blocchi associata alle sedute GPS", "icon": "bi-clock-history"},
         {"id": "utenti_accessi", "title": "Gestione Utenti & Accessi", "desc": "Profili staff, credenziali e permessi RBAC", "icon": "bi-person-gear"},
     ]
 
@@ -38,6 +39,8 @@ def render_pannello_controllo(t: dict):
         _render_sub_formazioni(t)
     elif active_sub == "tipologie_sessioni":
         _render_sub_tipologie_sessioni(t)
+    elif active_sub == "timeline_allenamenti":
+        _render_sub_timeline_allenamenti(t)
     elif active_sub == "utenti_accessi":
         if st.session_state.get("user_role") == "admin":
             views.admin_utenti.render_admin_utenti(t)
@@ -1460,3 +1463,270 @@ def _render_sub_tipologie_sessioni(t: dict):
         _fragment_batch_typologies(sess_df)
 
     _fragment_typologies_table(sess_df)
+
+
+# ==============================================================================
+# 7. GESTIONE TIMELINE ALLENAMENTI (ASSOCIAZIONE SEDUTE GPS)
+# ==============================================================================
+def _render_sub_timeline_allenamenti(t: dict):
+    st.markdown("### ⏱️ Gestione Timeline Cronologica degli Allenamenti FIR")
+    st.caption(
+        "Associa o modifica la sequenza cronologica a blocchi (Attivazione, Drill, Collettivo, Contatto, Reparto, Pause, Clarity) "
+        "per ciascuna seduta GPS. Se una seduta ha una timeline salvata, questa comparirà automaticamente nel 'Report Allenamento e Storytelling' e nel PDF."
+    )
+
+    import timeline_manager
+
+    sess_df = utils.get_all_fir_unique_sessions()
+    if sess_df.empty:
+        st.info("Nessuna sessione GPS della Nazionale Italiana presente nel database.")
+        return
+
+    saved_sessions = set(timeline_manager.get_all_saved_timeline_sessions())
+
+    # Metric summary
+    n_total = len(sess_df)
+    n_with_tl = len([s for s in sess_df["session_name"] if s in saved_sessions])
+    n_without_tl = n_total - n_with_tl
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("📋 Sessioni GPS Rilevate", n_total)
+    m2.metric("🟢 Con Timeline Associata", n_with_tl, help="Queste sedute mostrano il grafico cronologico nel Report Storytelling")
+    m3.metric("⚪ Senza Timeline (Spazio Vuoto)", n_without_tl, help="Per queste sedute lo spazio rimarrà vuoto nel Report")
+
+    st.markdown("<hr style='border-color:#E2E8F0; margin:16px 0 20px 0;'>", unsafe_allow_html=True)
+
+    # Selettore Seduta
+    col_filter, col_spacer = st.columns([2.0, 2.0])
+    with col_filter:
+        only_saved = st.checkbox("Mostra solo sedute con timeline associata", value=False, key="tl_only_saved_chk")
+
+    if only_saved:
+        filtered_df = sess_df[sess_df["session_name"].isin(saved_sessions)].copy()
+        if filtered_df.empty:
+            st.info("Nessuna seduta con timeline associata tra quelle filtrate.")
+            return
+    else:
+        filtered_df = sess_df.copy()
+
+    sess_options = filtered_df["session_name"].tolist()
+
+    def _fmt_sess_option(s_name: str) -> str:
+        r_matches = sess_df[sess_df["session_name"] == s_name]
+        if not r_matches.empty:
+            r = r_matches.iloc[0]
+            st_dot = "🟢 [ATTIVA]" if s_name in saved_sessions else "⚪ [NON PRESENTE]"
+            return f"{st_dot} {r['date_str']} — {s_name} ({r['players_count']} atleti • {r['assigned_type']})"
+        return s_name
+
+    selected_sess = st.selectbox(
+        "🎯 Seleziona la Seduta GPS su cui operare:",
+        options=sess_options,
+        format_func=_fmt_sess_option,
+        key="tl_mgmt_sess_select",
+    )
+
+    if not selected_sess:
+        return
+
+    is_saved = selected_sess in saved_sessions
+    saved_blocks = timeline_manager.get_session_timeline(selected_sess)
+
+    # Chiave di stato per il draft dei blocchi
+    draft_key = f"tl_editor_blocks_{selected_sess}"
+    if draft_key not in st.session_state or st.session_state.get("tl_last_loaded_sess") != selected_sess:
+        st.session_state[draft_key] = [dict(b) for b in saved_blocks]
+        st.session_state["tl_last_loaded_sess"] = selected_sess
+
+    active_blocks = st.session_state[draft_key]
+
+    # SE LA TIMELINE È SALVATA ED ESISTE
+    if is_saved and active_blocks:
+        total_tl_min = sum(float(b.get("duration", 0)) for b in active_blocks)
+        n_pause = sum(1 for b in active_blocks if "pausa" in str(b.get("name", "")).lower())
+        tot_pause_min = sum(float(b.get("duration", 0)) for b in active_blocks if "pausa" in str(b.get("name", "")).lower())
+        tot_work_min = total_tl_min - tot_pause_min
+
+        st.markdown(
+            f"""
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-radius:14px; padding:18px 20px 10px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04); margin-bottom:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#10B981;"></span>
+                        <div style="font-size:1.05rem; font-weight:800; color:#002B49;">
+                            Anteprima Grafico Timeline Associata: <span style="color:#0066B2;">{selected_sess}</span>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; font-size:0.75rem;">
+                        <span style="background:#F1F5F9; color:#0F172A; border:1px solid #E2E8F0; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            ⏱️ Durata: <b>{total_tl_min:g} min</b>
+                        </span>
+                        <span style="background:#EFF6FF; color:#0066B2; border:1px solid #BFDBFE; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            🏃 Attività: <b>{tot_work_min:g} min</b> ({(tot_work_min/total_tl_min)*100:.0f}%)
+                        </span>
+                        <span style="background:#F0FDF4; color:#15803D; border:1px solid #BBF7D0; padding:4px 10px; border-radius:8px; font-weight:700;">
+                            ☕ Pause ({n_pause}): <b>{tot_pause_min:g} min</b>
+                        </span>
+                    </div>
+                </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        fig_prev = timeline_manager.build_timeline_plotly_fig(active_blocks, height=140)
+        st.plotly_chart(fig_prev, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    elif not is_saved and not active_blocks:
+        st.markdown(
+            f"""
+            <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-left:5px solid #94A3B8; border-radius:12px; padding:18px 20px; margin-bottom:18px; box-shadow:0 2px 6px rgba(0,0,0,0.03);">
+                <div style="font-size:1.02rem; font-weight:800; color:#0F172A; margin-bottom:4px;">
+                    ⚪ Nessuna Timeline Attualmente Associata a '{selected_sess}'
+                </div>
+                <div style="font-size:0.80rem; color:#64748B; margin-bottom:14px;">
+                    Nel <b>Report Allenamento e Storytelling</b> lo spazio per la timeline rimarrà vuoto. 
+                    Puoi crearne una adesso partendo dal template standard FIR, copiandola da un'altra seduta oppure inserendo blocchi personalizzati.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        init_c1, init_c2, init_c3 = st.columns([1.6, 1.6, 1.2])
+        with init_c1:
+            if st.button("⚡ Inizializza da Template Standard FIR (13 blocchi)", type="primary", use_container_width=True, key=f"btn_init_std_{selected_sess}"):
+                st.session_state[draft_key] = [dict(b) for b in timeline_manager.DEFAULT_261111_BLOCKS]
+                st.rerun()
+
+        with init_c2:
+            other_saved = [s for s in saved_sessions if s != selected_sess]
+            if other_saved:
+                src_copy = st.selectbox("Seleziona seduta sorgente da cui copiare:", other_saved, key=f"copy_src_{selected_sess}")
+                if st.button(f"📋 Clona Blocchi da '{src_copy}'", use_container_width=True, key=f"btn_copy_do_{selected_sess}"):
+                    src_blocks = timeline_manager.get_session_timeline(src_copy)
+                    st.session_state[draft_key] = [dict(b) for b in src_blocks]
+                    st.rerun()
+            else:
+                st.caption("Nessun'altra seduta con timeline salvata da cui poter clonare.")
+
+        with init_c3:
+            if st.button("➕ Crea Nuova Timeline Vuota", use_container_width=True, key=f"btn_init_blank_{selected_sess}"):
+                st.session_state[draft_key] = [
+                    {"name": "Attivazione", "duration": 15.0},
+                    {"name": "Pausa", "duration": 3.0},
+                ]
+                st.rerun()
+
+    # Se ci sono blocchi attivi nel draft (sia da sessione esistente, sia appena inizializzati)
+    if active_blocks:
+        st.markdown(
+            f"""
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; margin-bottom:8px;">
+                <div style="font-size:1.0rem; font-weight:800; color:#002B49;">
+                    ✏️ Tabella Modifica Blocchi della Timeline ({selected_sess})
+                </div>
+                <div style="font-size:0.75rem; color:#64748B;">
+                    Inserisci o modifica i blocchi. Puoi aggiungere o rimuovere righe liberamente.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        editor_rows = [
+            {"Ordine": i + 1, "Nome Blocco": b["name"], "Durata (min)": float(b["duration"])}
+            for i, b in enumerate(active_blocks)
+        ]
+        df_editor = pd.DataFrame(editor_rows) if editor_rows else pd.DataFrame(columns=["Ordine", "Nome Blocco", "Durata (min)"])
+
+        c_ed_tab, c_ed_leg = st.columns([3, 1])
+        with c_ed_tab:
+            edited_tl = st.data_editor(
+                df_editor,
+                num_rows="dynamic",
+                use_container_width=True,
+                key=f"data_editor_mgmt_{selected_sess}",
+                column_config={
+                    "Ordine": st.column_config.NumberColumn("N°", width="small", disabled=True),
+                    "Nome Blocco": st.column_config.TextColumn(
+                        "Nome Blocco / Esercizio",
+                        help="Nomi con palette ufficiale FIR: Attivazione, Drill, Collettivo, Contatto, Reparto, Pausa, Clarity. Puoi digitare anche nuove voci.",
+                        required=True,
+                    ),
+                    "Durata (min)": st.column_config.NumberColumn(
+                        "Durata (min)",
+                        help="Durata in minuti (es. 15, 3, 11.5)",
+                        min_value=0.5,
+                        max_value=240.0,
+                        step=0.5,
+                        format="%.1f min",
+                        required=True,
+                    ),
+                },
+                hide_index=True,
+            )
+
+        with c_ed_leg:
+            st.markdown("<div style='font-size:0.80rem; font-weight:800; color:#002B49; margin-bottom:6px;'>Palette Colori Automatica</div>", unsafe_allow_html=True)
+            col_legend_html = "<div style='display:flex; flex-direction:column; gap:4px; font-size:0.75rem; background:#F8FAFC; border:1px solid #E2E8F0; padding:10px; border-radius:8px;'>"
+            for c_name in timeline_manager.CANONICAL_BLOCK_NAMES:
+                c_hex = timeline_manager.get_block_color(c_name)
+                col_legend_html += f"<div style='display:flex; align-items:center; gap:8px;'><span style='display:inline-block; width:14px; height:14px; border-radius:3px; background:{c_hex}; border:1px solid #0F172A;'></span><span style='font-weight:700; color:#1E293B;'>{c_name}</span></div>"
+            col_legend_html += "<div style='color:#64748B; font-size:0.70rem; margin-top:4px;'>* I nomi uguali mantengono sempre lo stesso colore.</div></div>"
+            st.markdown(col_legend_html, unsafe_allow_html=True)
+
+        # Pulsanti di azione
+        btn_c1, btn_c2, btn_c3, btn_c4 = st.columns([1.6, 1.2, 1.2, 1.2])
+
+        with btn_c1:
+            if st.button("💾 Salva e Associa Timeline a questa Seduta", type="primary", use_container_width=True, key=f"btn_save_mgmt_{selected_sess}"):
+                new_blocks = []
+                if edited_tl is not None and not edited_tl.empty:
+                    for _, r in edited_tl.iterrows():
+                        n = str(r.get("Nome Blocco", "")).strip()
+                        try:
+                            d = float(r.get("Durata (min)", 0))
+                        except (ValueError, TypeError):
+                            d = 0.0
+                        if n and d > 0:
+                            new_blocks.append({"name": n, "duration": round(d, 1)})
+                if new_blocks:
+                    timeline_manager.save_session_timeline(selected_sess, new_blocks)
+                    st.session_state[draft_key] = [dict(b) for b in new_blocks]
+                    st.success(f"✅ Timeline per '{selected_sess}' salvata con successo! Ora comparirà nel Report Storytelling e nel PDF.")
+                    st.rerun()
+                else:
+                    st.error("Inserisci almeno un blocco valido con durata maggiore di zero.")
+
+        with btn_c2:
+            if st.button("☕ Aggiungi Pausa (3 min)", use_container_width=True, key=f"btn_pausa_mgmt_{selected_sess}"):
+                curr_draft = []
+                if edited_tl is not None and not edited_tl.empty:
+                    for _, r in edited_tl.iterrows():
+                        n = str(r.get("Nome Blocco", "")).strip()
+                        try:
+                            d = float(r.get("Durata (min)", 0))
+                        except Exception:
+                            d = 0.0
+                        if n and d > 0:
+                            curr_draft.append({"name": n, "duration": round(d, 1)})
+                curr_draft.append({"name": "Pausa", "duration": 3.0})
+                st.session_state[draft_key] = curr_draft
+                st.rerun()
+
+        with btn_c3:
+            if st.button("🔄 Reimposta Standard FIR", use_container_width=True, key=f"btn_reset_std_mgmt_{selected_sess}"):
+                st.session_state[draft_key] = [dict(b) for b in timeline_manager.DEFAULT_261111_BLOCKS]
+                st.rerun()
+
+        with btn_c4:
+            if is_saved:
+                if st.button("🗑️ Elimina Timeline", type="secondary", use_container_width=True, key=f"btn_del_mgmt_{selected_sess}"):
+                    timeline_manager.delete_session_timeline(selected_sess)
+                    st.session_state[draft_key] = []
+                    st.warning(f"Timeline per '{selected_sess}' eliminata. Lo spazio nel Report Storytelling tornerà vuoto.")
+                    st.rerun()
+            else:
+                if st.button("❌ Annulla Creazione", use_container_width=True, key=f"btn_cancel_mgmt_{selected_sess}"):
+                    st.session_state[draft_key] = []
+                    st.rerun()

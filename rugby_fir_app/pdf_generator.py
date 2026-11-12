@@ -1388,12 +1388,12 @@ class TrainingTimelineFlowable(Flowable):
         if total_dur <= 0:
             return
 
-        from timeline_manager import get_block_color
+        from timeline_manager import get_block_color, _get_contrast_color
 
         canv.saveState()
         # Etichetta 'MINUTI' sulla sinistra
         canv.setFont("Helvetica-Bold", 8.5)
-        canv.setFillColor(colors.HexColor("#0F172A"))
+        canv.setFillColor(colors.HexColor("#002B49"))
         canv.drawString(2, 21, "MINUTI")
 
         x_start = 52
@@ -1413,13 +1413,14 @@ class TrainingTimelineFlowable(Flowable):
             dur_str = f"{dur:g}".replace(".", ",")
             w = (dur / total_dur) * bar_w
             hex_c = get_block_color(name)
+            text_hex = _get_contrast_color(hex_c)
 
             # Rettangolo blocco
             canv.setFillColor(colors.HexColor(hex_c))
             canv.rect(curr_x, bar_y, w, bar_h, fill=1, stroke=1)
 
             # Testo durata all'interno del blocco
-            canv.setFillColor(colors.HexColor("#000000"))
+            canv.setFillColor(colors.HexColor(text_hex))
             fsize = 8.5 if w >= 22 else 7.0 if w >= 13 else 5.8
             canv.setFont("Helvetica-Bold", fsize)
             if w >= 8:
@@ -1428,17 +1429,21 @@ class TrainingTimelineFlowable(Flowable):
             legend_items.append((name, hex_c))
             curr_x += w
 
-        # Legenda orizzontale sotto la barra
+        # Legenda orizzontale sotto la barra (deduplicando le voci ripetute come le pause)
         leg_x = x_start
         leg_y = 2
         canv.setFont("Helvetica-Bold", 6.6)
+        seen_pdf_leg = set()
         for name, hex_c in legend_items:
+            if name in seen_pdf_leg:
+                continue
+            seen_pdf_leg.add(name)
             canv.setFillColor(colors.HexColor(hex_c))
             canv.rect(leg_x, leg_y + 1, 6.5, 6.5, fill=1, stroke=1)
             canv.setFillColor(colors.HexColor("#0F172A"))
             canv.drawString(leg_x + 8.5, leg_y + 1.5, name)
             str_w = canv.stringWidth(name, "Helvetica-Bold", 6.6)
-            leg_x += 8.5 + str_w + 8
+            leg_x += 8.5 + str_w + 10
             if leg_x > self.width - 25:
                 break
         canv.restoreState()

@@ -113,55 +113,64 @@ def save_all_timelines(timelines: dict) -> bool:
 def get_session_timeline(session_name: str) -> list:
     """
     Restituisce la lista ordinata dei blocchi [{'name': ..., 'duration': ...}] per la seduta.
-    Se la seduta è '261111 volume' e non è ancora salvata, inizializza con i blocchi reali FIR.
+    Se la seduta non ha una timeline associata, ritorna [].
     """
     s_key = str(session_name or "").strip()
+    if not s_key:
+        return []
     timelines = load_all_timelines()
 
     if s_key in timelines and isinstance(timelines[s_key], list) and timelines[s_key]:
         return timelines[s_key]
 
-    # Pre-popolamento automatico per la seduta volume del 11 nov (come da immagine)
-    if "261111" in s_key or "volume" in s_key.lower():
-        timelines[s_key] = [dict(b) for b in DEFAULT_261111_BLOCKS]
-        save_all_timelines(timelines)
-        return timelines[s_key]
-
     return []
 
 
-def save_session_timeline(session_name: str, blocks: list) -> bool:
-    """Salva la timeline per una specifica sessione."""
+def delete_session_timeline(session_name: str) -> bool:
+    """Elimina la timeline associata a una specifica sessione."""
     s_key = str(session_name or "").strip()
     if not s_key:
         return False
     timelines = load_all_timelines()
-    clean_blocks = []
-    for b in blocks:
-        name = str(b.get("name", "")).strip()
+    if s_key in timelines:
+        del timelines[s_key]
+        return save_all_timelines(timelines)
+    return False
+
+
+def get_all_saved_timeline_sessions() -> list:
+    """Ritorna la lista dei nomi sessione con timeline salvata e non vuota."""
+    timelines = load_all_timelines()
+    return [k for k, v in timelines.items() if isinstance(v, list) and len(v) > 0]
+
+
+def _get_contrast_color(hex_color: str) -> str:
+    """Calcola il colore di testo con massimo contrasto (scuro o chiaro)."""
+    hex_c = str(hex_color or "").lstrip("#")
+    if len(hex_c) == 6:
         try:
-            dur = round(float(b.get("duration", 0)), 1)
-        except (ValueError, TypeError):
-            dur = 0.0
-        if name and dur > 0:
-            clean_blocks.append({"name": name, "duration": dur})
-    timelines[s_key] = clean_blocks
-    return save_all_timelines(timelines)
+            r, g, b = int(hex_c[0:2], 16), int(hex_c[2:4], 16), int(hex_c[4:6], 16)
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            return "#002B49" if lum > 160 else "#FFFFFF"
+        except Exception:
+            pass
+    return "#002B49"
 
 
-def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135) -> go.Figure:
+def build_timeline_plotly_fig(blocks: list, width: int = 1100, height: int = 140) -> go.Figure:
     """
     Costruisce la figura Plotly della timeline dell'allenamento
-    graficamente fedele all'immagine:
-    - Etichetta verticale 'MINUTI'
-    - Segmenti orizzontali colorati proporzionali alla durata
-    - Valore della durata centrato all'interno di ciascun blocco
-    - Legenda orizzontale in basso con quadratini colorati e nomi
+    in perfetto stile FIR:
+    - Etichetta verticale 'MINUTI' in Navy FIR
+    - Segmenti orizzontali colorati proporzionali alla durata con bordi netti
+    - Valore della durata centrato all'interno di ciascun blocco con contrasto cromatico ottimale
+    - Tooltip hover ricco con nome, durata, % seduta e intervallo minuti (es. 18' -> 29.5')
+    - Legenda orizzontale compatta in basso con blocchi univoci
     """
     fig = go.Figure()
     if not blocks:
         fig.add_annotation(
-            text="<i>Nessun blocco configurato. Utilizza la tabella in fondo alla pagina per aggiungere la timeline.</i>",
+            text="<i>Nessuna timeline configurata per questa seduta.</i>",
             showarrow=False,
             font=dict(size=12, color="#64748B"),
         )
@@ -180,14 +189,19 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
         total_dur = 1.0
 
     seen_legend = set()
+    curr_m = 0.0
 
     for idx, b in enumerate(blocks):
         b_name = str(b.get("name", "")).strip()
         dur = float(b.get("duration", 0))
         c = get_block_color(b_name)
+        text_color = _get_contrast_color(c)
         dur_str = f"{dur:g}".replace(".", ",")
 
-        # Dimensione testo adattiva in base alla durata del blocco
+        start_m = curr_m
+        end_m = curr_m + dur
+        curr_m = end_m
+
         pct_w = dur / total_dur
         if pct_w >= 0.08:
             txt_size = 12
@@ -198,18 +212,24 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
         else:
             txt_size = 7.5
 
-        # Mostra in legenda ogni singolo blocco (o raggruppamento per nome pulito)
-        leg_name = b_name
-        show_in_leg = True
+        # Mostra in legenda una sola volta per categoria/nome blocco univoco
+        show_in_leg = (b_name not in seen_legend)
+        seen_legend.add(b_name)
+
+        hover_html = (
+            f"<span style='font-size:13px; font-weight:800; color:{c};'>{b_name}</span><br>"
+            f"⏱️ Durata: <b>{dur_str} min</b> ({pct_w * 100:.1f}%)<br>"
+            f"🕒 Intervallo: <b>{start_m:g}' &rarr; {end_m:g}'</b>"
+        )
 
         fig.add_trace(go.Bar(
             y=["MINUTI"],
             x=[dur],
-            name=leg_name,
+            name=b_name,
             orientation="h",
             marker=dict(
                 color=c,
-                line=dict(color="#0F172A", width=0.8),
+                line=dict(color="#0F172A", width=0.9),
             ),
             text=dur_str,
             textposition="inside",
@@ -217,11 +237,11 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
             textfont=dict(
                 family="Arial, Helvetica, sans-serif",
                 size=txt_size,
-                color="#000000",
+                color=text_color,
                 weight="bold",
             ),
             hoverinfo="text",
-            hovertext=f"<b>{b_name}</b><br>Durata: {dur_str} min ({(dur / total_dur) * 100:.1f}%)",
+            hovertext=hover_html,
             showlegend=show_in_leg,
             legendgroup=b_name,
         ))
@@ -231,7 +251,7 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
         height=height,
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
-        margin=dict(l=75, r=20, t=10, b=45),
+        margin=dict(l=80, r=20, t=10, b=45),
         xaxis=dict(
             showgrid=False,
             zeroline=False,
@@ -244,8 +264,8 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
             zeroline=False,
             tickfont=dict(
                 family="Arial, Helvetica, sans-serif",
-                size=13,
-                color="#000000",
+                size=12.5,
+                color="#002B49",
                 weight="bold",
             ),
             fixedrange=True,
@@ -253,13 +273,13 @@ def build_timeline_plotly_fig(blocks: list, width: int = 1000, height: int = 135
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.30,
+            y=-0.28,
             xanchor="center",
             x=0.5,
             font=dict(
                 family="Arial, Helvetica, sans-serif",
                 size=10,
-                color="#0F172A",
+                color="#1E293B",
                 weight="bold",
             ),
             itemwidth=30,
