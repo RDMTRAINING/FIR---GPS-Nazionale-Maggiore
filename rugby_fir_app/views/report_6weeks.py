@@ -1520,6 +1520,9 @@ def _render_tab_singolo_atleta_3w(t: dict):
     dt_delta_0 = ((st0["DT"] - st1["DT"]) / st1["DT"] * 100.0) if st1["DT"] > 0 else 0.0
     hml_delta_0 = ((st0["Hml"] - st1["Hml"]) / st1["Hml"] * 100.0) if st1["Hml"] > 0 else 0.0
 
+    # 3 Summary Cards
+    col_k1, col_k2, col_k3 = st.columns(3)
+
     with col_k1:
         st.markdown(
             f"""
