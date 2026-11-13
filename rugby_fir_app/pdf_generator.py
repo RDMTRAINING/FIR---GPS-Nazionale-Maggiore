@@ -4224,7 +4224,7 @@ def _build_single_athlete_gps_flowables(
     # 3 Summary Cards Settimanali
     st2 = week_stats.get("Week -2", {})
     st1 = week_stats.get("Week -1", {})
-    st0 = week_stats.get("Week 0 (Attuale)", {})
+    st0 = week_stats.get("Week 0 (Settimana Selezionata)") or week_stats.get("Week 0 (Attuale)") or week_stats.get("Week 0") or {}
 
     dt2 = st2.get("DT", 0.0)
     dt1 = st1.get("DT", 0.0)

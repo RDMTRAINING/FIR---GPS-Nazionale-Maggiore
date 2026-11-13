@@ -33,13 +33,13 @@ def _get_available_weeks_options() -> tuple:
 
     weeks = []
     cur = latest_mon
-    default_idx = 0  # Settimana attuale (in corso) posizionata al primo indice per default
+    default_idx = 0
     while cur >= first_mon:
         end_w = cur + pd.Timedelta(days=6)
         mon_str = cur.strftime("%Y-%m-%d")
         cur_fmt = cur.strftime("%d/%m/%y")
         end_fmt = end_w.strftime("%d/%m/%y")
-        if cur == latest_mon:
+        if cur == today_mon:
             lbl = f"{cur_fmt} – {end_fmt} (Settimana Attuale)"
             default_idx = len(weeks)
         elif cur == pd.Timestamp("2026-10-19"):
@@ -1188,12 +1188,20 @@ def _render_tab_singolo_atleta_3w(t: dict):
 
     # Sincronizzazione automatica con la settimana selezionata nella barra laterale
     cur_camp = st.session_state.get("global_selected_camp_obj")
-    if cur_camp and "start_date" in cur_camp:
-        camp_s_dt = str(cur_camp["start_date"])[:10]
-        for w_i, (w_mon, _) in enumerate(week_options):
+    camp_s_dt = str(cur_camp["start_date"])[:10] if (cur_camp and "start_date" in cur_camp) else None
+    
+    if camp_s_dt:
+        for w_i, (w_mon, w_lbl) in enumerate(week_options):
             if w_mon == camp_s_dt:
                 default_week_idx = w_i
                 break
+
+    # Se il raduno nella sidebar è cambiato o la chiave non è sincronizzata, aggiorna il valore
+    if camp_s_dt and st.session_state.get("_p3w_last_synced_camp") != camp_s_dt:
+        st.session_state["p3w_sel_week"] = week_labels[default_week_idx]
+        st.session_state["_p3w_last_synced_camp"] = camp_s_dt
+    elif "p3w_sel_week" not in st.session_state or st.session_state["p3w_sel_week"] not in week_labels:
+        st.session_state["p3w_sel_week"] = week_labels[default_week_idx]
 
     # Barra Filtri Giocatore Unificata (Settimana, Reparto, Ruolo, Giocatore)
     f_col1, f_col2, f_col3, f_col4 = st.columns([1.5, 1.0, 1.2, 2.0])
@@ -1206,6 +1214,7 @@ def _render_tab_singolo_atleta_3w(t: dict):
     )
     ref_mon_input = week_dict[sel_week_lbl]
     if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_input:
+        st.session_state["_p3w_last_synced_camp"] = ref_mon_input
         import global_state
         global_state.sync_selected_camp_by_date(ref_mon_input)
     filt_dept = f_col2.selectbox(
@@ -1378,27 +1387,28 @@ def _render_tab_singolo_atleta_3w(t: dict):
     )
 
     # Costruzione tabella completa dei 21 giorni
+    # ORDINE RICHIESTO: dal giorno finale della settimana selezionata (Domenica Week 0) a scendere fino al lunedì della settimana -2
     giorni_ita = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
     mesi_ita = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
 
     daily_rows = []
-    current_day = w2_mon
-    while current_day <= w0_sun:
+    current_day = w0_sun
+    while current_day >= w2_mon:
         day_str = current_day.strftime("%Y-%m-%d")
         
         # Settimana di appartenenza
-        if current_day < w1_mon:
-            w_code = "Week -2"
-            w_color = "#93C5FD"
-            w_ord = 1
-        elif current_day < w0_mon:
+        if current_day >= w0_mon:
+            w_code = "Week 0 (Settimana Selezionata)"
+            w_color = "#38BDF8"
+            w_ord = 3
+        elif current_day >= w1_mon:
             w_code = "Week -1"
             w_color = "#818CF8"
             w_ord = 2
         else:
-            w_code = "Week 0 (Attuale)"
-            w_color = "#38BDF8"
-            w_ord = 3
+            w_code = "Week -2"
+            w_color = "#93C5FD"
+            w_ord = 1
 
         day_label = f"{giorni_ita[current_day.weekday()]} {current_day.day} {mesi_ita[current_day.month - 1]}"
 
@@ -1475,32 +1485,33 @@ def _render_tab_singolo_atleta_3w(t: dict):
             "Vmax": vmax,
             "Duration": dur,
         })
-        current_day += pd.Timedelta(days=1)
+        current_day -= pd.Timedelta(days=1)
 
     df_21 = pd.DataFrame(daily_rows)
 
     # Calcolo KPI per le 3 Settimane
     week_stats = {}
-    for w_code in ["Week -2", "Week -1", "Week 0 (Attuale)"]:
+    for w_code in ["Week -2", "Week -1", "Week 0 (Settimana Selezionata)", "Week 0 (Attuale)", "Week 0"]:
         w_sub = df_21[df_21["week_code"] == w_code]
-        week_stats[w_code] = {
-            "DT": w_sub["DT"].sum(),
-            "DC": w_sub["DC"].sum(),
-            "Hml": w_sub["Hml"].sum(),
-            "VHml": w_sub["VHml"].sum(),
-            "HSR": w_sub["HSR"].sum(),
-            "Vmax": w_sub["Vmax"].max(),
-            "Sessions": int((w_sub["has_gps"] == True).sum()),
-            "Match_Min": w_sub["match_min"].sum(),
-            "Matches": int((w_sub["is_match"] == True).sum()),
-        }
+        if not w_sub.empty or w_code in ["Week -2", "Week -1", "Week 0 (Settimana Selezionata)"]:
+            week_stats[w_code] = {
+                "DT": float(w_sub["DT"].sum()),
+                "DC": float(w_sub["DC"].sum()),
+                "Hml": float(w_sub["Hml"].sum()),
+                "VHml": float(w_sub["VHml"].sum()),
+                "HSR": float(w_sub["HSR"].sum()),
+                "Vmax": float(w_sub["Vmax"].max()) if not w_sub.empty and (w_sub["Vmax"].max() > 0) else 0.0,
+                "Sessions": int((w_sub["has_gps"] == True).sum()),
+                "Match_Min": float(w_sub["match_min"].sum()),
+                "Matches": int((w_sub["is_match"] == True).sum()),
+            }
 
-    # 3 Summary Cards
-    col_k1, col_k2, col_k3 = st.columns(3)
-    
-    st2 = week_stats["Week -2"]
-    st1 = week_stats["Week -1"]
-    st0 = week_stats["Week 0 (Attuale)"]
+    st2 = week_stats.get("Week -2", {"DT": 0, "DC": 0, "Hml": 0, "VHml": 0, "HSR": 0, "Vmax": 0, "Sessions": 0, "Match_Min": 0})
+    st1 = week_stats.get("Week -1", {"DT": 0, "DC": 0, "Hml": 0, "VHml": 0, "HSR": 0, "Vmax": 0, "Sessions": 0, "Match_Min": 0})
+    st0 = week_stats.get("Week 0 (Settimana Selezionata)", week_stats.get("Week 0 (Attuale)", week_stats.get("Week 0", {"DT": 0, "DC": 0, "Hml": 0, "VHml": 0, "HSR": 0, "Vmax": 0, "Sessions": 0, "Match_Min": 0})))
+    week_stats["Week 0 (Attuale)"] = st0
+    week_stats["Week 0"] = st0
+    week_stats["Week 0 (Settimana Selezionata)"] = st0
 
     # Deltas
     dt_delta_1 = ((st1["DT"] - st2["DT"]) / st2["DT"] * 100.0) if st2["DT"] > 0 else 0.0
@@ -1585,26 +1596,28 @@ def _render_tab_singolo_atleta_3w(t: dict):
     st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
 
     # --------------------------------------------------------------------------
-    # GRAFICO PLOTLY DAY-BY-DAY (21 GIORNI)
+    # GRAFICO PLOTLY DAY-BY-DAY (21 GIORNI: Cronologico da sinistra a destra)
     # --------------------------------------------------------------------------
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
+    df_chart = df_21.sort_values("date", ascending=True) if "date" in df_21.columns else df_21
+
     # Colori barre per settimana
     bar_colors = []
-    for _, r in df_21.iterrows():
+    for _, r in df_chart.iterrows():
         if r["is_match"]:
             bar_colors.append("#EF4444")  # Rosso per giorno match
-        elif r["week_code"] == "Week -2":
+        elif "Week -2" in r["week_code"]:
             bar_colors.append("#93C5FD")
-        elif r["week_code"] == "Week -1":
+        elif "Week -1" in r["week_code"]:
             bar_colors.append("#6366F1")
         else:
             bar_colors.append("#0284C7")
 
     fig.add_trace(
         go.Bar(
-            x=df_21["day_label"],
-            y=df_21["DT"],
+            x=df_chart["day_label"],
+            y=df_chart["DT"],
             name="Distanza Totale (m)",
             marker_color=bar_colors,
             opacity=0.88,
@@ -1615,8 +1628,8 @@ def _render_tab_singolo_atleta_3w(t: dict):
 
     fig.add_trace(
         go.Scatter(
-            x=df_21["day_label"],
-            y=df_21["Hml"],
+            x=df_chart["day_label"],
+            y=df_chart["Hml"],
             name="High Metabolic Load (Hml >25.5W)",
             line=dict(color="#F59E0B", width=2.5),
             marker=dict(size=6, color="#D97706"),

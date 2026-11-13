@@ -4478,21 +4478,21 @@ def build_athlete_21d_workload(
     mesi_ita = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
 
     daily_rows = []
-    current_day = w2_mon
-    while current_day <= w0_sun:
+    current_day = w0_sun
+    while current_day >= w2_mon:
         day_str = current_day.strftime("%Y-%m-%d")
-        if current_day < w1_mon:
-            w_code = "Week -2"
-            w_color = "#93C5FD"
-            w_ord = 1
-        elif current_day < w0_mon:
+        if current_day >= w0_mon:
+            w_code = "Week 0 (Settimana Selezionata)"
+            w_color = "#38BDF8"
+            w_ord = 3
+        elif current_day >= w1_mon:
             w_code = "Week -1"
             w_color = "#818CF8"
             w_ord = 2
         else:
-            w_code = "Week 0 (Attuale)"
-            w_color = "#38BDF8"
-            w_ord = 3
+            w_code = "Week -2"
+            w_color = "#93C5FD"
+            w_ord = 1
 
         day_label = f"{giorni_ita[current_day.weekday()]} {current_day.day} {mesi_ita[current_day.month - 1]}"
         sub_day = p_gps[p_gps["date_str"] == day_str] if not p_gps.empty else pd.DataFrame()
@@ -4558,24 +4558,30 @@ def build_athlete_21d_workload(
             "Vmax": vmax,
             "Duration": dur,
         })
-        current_day += pd.Timedelta(days=1)
+        current_day -= pd.Timedelta(days=1)
 
     df_21 = pd.DataFrame(daily_rows)
 
     week_stats = {}
-    for w_code in ["Week -2", "Week -1", "Week 0 (Attuale)"]:
+    for w_code in ["Week -2", "Week -1", "Week 0 (Settimana Selezionata)", "Week 0 (Attuale)", "Week 0"]:
         w_sub = df_21[df_21["week_code"] == w_code]
-        week_stats[w_code] = {
-            "DT": w_sub["DT"].sum(),
-            "DC": w_sub["DC"].sum(),
-            "Hml": w_sub["Hml"].sum(),
-            "VHml": w_sub["VHml"].sum(),
-            "HSR": w_sub["HSR"].sum(),
-            "Vmax": w_sub["Vmax"].max(),
-            "Sessions": int((w_sub["has_gps"] == True).sum()),
-            "Match_Min": w_sub["match_min"].sum(),
-            "Matches": int((w_sub["is_match"] == True).sum()),
-        }
+        if not w_sub.empty or w_code in ["Week -2", "Week -1", "Week 0 (Settimana Selezionata)"]:
+            week_stats[w_code] = {
+                "DT": float(w_sub["DT"].sum()),
+                "DC": float(w_sub["DC"].sum()),
+                "Hml": float(w_sub["Hml"].sum()),
+                "VHml": float(w_sub["VHml"].sum()),
+                "HSR": float(w_sub["HSR"].sum()),
+                "Vmax": float(w_sub["Vmax"].max()) if not w_sub.empty and (w_sub["Vmax"].max() > 0) else 0.0,
+                "Sessions": int((w_sub["has_gps"] == True).sum()),
+                "Match_Min": float(w_sub["match_min"].sum()),
+                "Matches": int((w_sub["is_match"] == True).sum()),
+            }
+
+    st0 = week_stats.get("Week 0 (Settimana Selezionata)", week_stats.get("Week 0 (Attuale)", week_stats.get("Week 0", {})))
+    week_stats["Week 0 (Attuale)"] = st0
+    week_stats["Week 0"] = st0
+    week_stats["Week 0 (Settimana Selezionata)"] = st0
 
     return {
         "player_name": player_name,
@@ -4610,21 +4616,22 @@ def build_athlete_21d_chart(df_21: pd.DataFrame, player_name: str):
         return None
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
+    df_chart = df_21.sort_values("date", ascending=True) if "date" in df_21.columns else df_21
     bar_colors = []
-    for _, r in df_21.iterrows():
+    for _, r in df_chart.iterrows():
         if r["is_match"]:
             bar_colors.append("#EF4444")
-        elif r["week_code"] == "Week -2":
+        elif "Week -2" in r["week_code"]:
             bar_colors.append("#93C5FD")
-        elif r["week_code"] == "Week -1":
+        elif "Week -1" in r["week_code"]:
             bar_colors.append("#6366F1")
         else:
             bar_colors.append("#0284C7")
 
     fig.add_trace(
         go.Bar(
-            x=df_21["day_label"],
-            y=df_21["DT"],
+            x=df_chart["day_label"],
+            y=df_chart["DT"],
             name="Distanza Totale (m)",
             marker_color=bar_colors,
             opacity=0.88,
@@ -4633,8 +4640,8 @@ def build_athlete_21d_chart(df_21: pd.DataFrame, player_name: str):
     )
     fig.add_trace(
         go.Scatter(
-            x=df_21["day_label"],
-            y=df_21["Hml"],
+            x=df_chart["day_label"],
+            y=df_chart["Hml"],
             name="Hml >25.5W",
             line=dict(color="#F59E0B", width=2.5),
             marker=dict(size=6, color="#D97706"),

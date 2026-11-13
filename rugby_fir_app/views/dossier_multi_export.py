@@ -29,13 +29,19 @@ def _get_available_weeks_options():
     camp_dates = pd.to_datetime(camps_df["start_date"].dropna().unique()) if not camps_df.empty else pd.DatetimeIndex([])
     all_dates = dates.union(camp_dates) if len(dates) > 0 else camp_dates
     mondays = sorted(list(set(d - pd.Timedelta(days=d.weekday()) for d in all_dates)), reverse=True)
+    
+    import datetime
+    today_dt = pd.to_datetime(datetime.date.today())
+    today_mon = today_dt - pd.Timedelta(days=today_dt.weekday())
+
     options = []
     default_idx = 0
     for idx, mon in enumerate(mondays):
         sun = mon + pd.Timedelta(days=6)
         mon_str = mon.strftime("%Y-%m-%d")
         lbl = f"{mon.strftime('%d/%m/%y')} — {sun.strftime('%d/%m/%y')}"
-        if mon_str == "2026-10-19":
+        if mon == today_mon:
+            lbl += " (Settimana Attuale)"
             default_idx = idx
         options.append((mon_str, lbl))
 
@@ -90,12 +96,18 @@ def render_dossier_multi_export(t: dict = None):
 
     # Sincronizzazione automatica con la settimana della barra laterale
     cur_camp = st.session_state.get("global_selected_camp_obj")
-    if cur_camp and "start_date" in cur_camp:
-        camp_s_dt = str(cur_camp["start_date"])[:10]
-        for w_i, (w_mon, _) in enumerate(week_options):
+    camp_s_dt = str(cur_camp["start_date"])[:10] if (cur_camp and "start_date" in cur_camp) else None
+    if camp_s_dt:
+        for w_i, (w_mon, w_lbl) in enumerate(week_options):
             if w_mon == camp_s_dt:
                 default_week_idx = w_i
                 break
+
+    if camp_s_dt and st.session_state.get("_dossier_last_synced_camp") != camp_s_dt:
+        st.session_state["dossier_week_select"] = week_labels[default_week_idx]
+        st.session_state["_dossier_last_synced_camp"] = camp_s_dt
+    elif "dossier_week_select" not in st.session_state or st.session_state["dossier_week_select"] not in week_labels:
+        st.session_state["dossier_week_select"] = week_labels[default_week_idx]
 
     sel_week_lbl = c_conf2.selectbox(
         "2. Settimana GPS di Riferimento (Week 0)",
@@ -106,6 +118,7 @@ def render_dossier_multi_export(t: dict = None):
     )
     ref_mon_str = week_dict[sel_week_lbl]
     if cur_camp is None or str(cur_camp.get("start_date", ""))[:10] != ref_mon_str:
+        st.session_state["_dossier_last_synced_camp"] = ref_mon_str
         import global_state
         global_state.sync_selected_camp_by_date(ref_mon_str)
 
