@@ -58,12 +58,12 @@ def _build_pdf_with_footer(doc, elements, brand="FEDERAZIONE ITALIANA RUGBY • 
 
     def _footer(canvas, d):
         canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor("#031926"))
-        canvas.setLineWidth(0.5)
+        canvas.setStrokeColor(colors.HexColor("#E2E8F0"))
+        canvas.setLineWidth(0.4)
         canvas.line(16, 16, width_pt - 16, 16)
-        canvas.setFont("Helvetica", 6.8)
-        canvas.setFillColor(colors.HexColor("#031926"))
-        canvas.drawString(16, 8, "Generato tramite tecnologia proprietaria RDM - Tutti i diritti riservati")
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(colors.HexColor("#94A3B8"))
+        canvas.drawString(16, 8, "MOV3 S.r.l. - Tutti i diritti riservati")
         canvas.drawRightString(width_pt - 16, 8, f"{brand}   |   Pagina {d.page}")
         canvas.restoreState()
 
@@ -4124,15 +4124,15 @@ def _draw_schieramento_pitch_on_canvas(
         c.setFont("Helvetica", 5.2)
         c.drawString(b2_x + 48, line_y, desc)
 
-    # Footer Watermark Proprietà Intellettuale RDM
+    # Footer Watermark Proprietà Intellettuale
     w_pt, _ = landscape(A4)
     c.saveState()
-    c.setStrokeColor(colors.HexColor("#031926"))
-    c.setLineWidth(0.5)
+    c.setStrokeColor(colors.HexColor("#E2E8F0"))
+    c.setLineWidth(0.4)
     c.line(16, 10, w_pt - 16, 10)
-    c.setFont("Helvetica", 6.2)
-    c.setFillColor(colors.HexColor("#031926"))
-    c.drawString(16, 4, "Generato tramite tecnologia proprietaria RDM - Tutti i diritti riservati")
+    c.setFont("Helvetica", 6.0)
+    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.drawString(16, 4, "MOV3 S.r.l. - Tutti i diritti riservati")
     c.drawRightString(w_pt - 16, 4, "FEDERAZIONE ITALIANA RUGBY • SCHIERAMENTO IN CAMPO (1-23)")
     c.restoreState()
 

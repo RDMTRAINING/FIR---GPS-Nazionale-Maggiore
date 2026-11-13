@@ -247,7 +247,7 @@ def main():
         st.markdown(
             """
             <div style="text-align:center; padding:12px 4px 6px 4px; font-size:0.68rem; color:#94A3B8; opacity:0.85;">
-                © 2026 - Generato tramite tecnologia proprietaria RDM
+                MOV3 S.r.l. - Tutti i diritti riservati
             </div>
             """,
             unsafe_allow_html=True,
@@ -321,8 +321,8 @@ def main():
 
     st.markdown(
         """
-        <div style="text-align:center; padding:24px 0 12px 0; font-size:0.72rem; color:#64748B; border-top:1px solid #E2E8F0; margin-top:36px;">
-            © 2026 - Generato tramite tecnologia proprietaria RDM
+        <div style="text-align:center; padding:24px 0 12px 0; font-size:0.72rem; color:#94A3B8; border-top:1px solid #E2E8F0; margin-top:36px;">
+            MOV3 S.r.l. - Tutti i diritti riservati
         </div>
         """,
         unsafe_allow_html=True,

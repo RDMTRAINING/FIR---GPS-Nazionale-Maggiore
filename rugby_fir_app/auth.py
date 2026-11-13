@@ -638,8 +638,8 @@ def render_terms_agreement_page(t: dict, user_info: dict):
 
             st.markdown(
                 """
-                <div style="text-align:center; padding-top:18px; font-size:0.72rem; color:#64748B;">
-                    © 2026 - Generato tramite tecnologia proprietaria RDM &bull; Tutti i diritti riservati
+                <div style="text-align:center; padding-top:18px; font-size:0.72rem; color:#94A3B8;">
+                    MOV3 S.r.l. - Tutti i diritti riservati
                 </div>
                 """,
                 unsafe_allow_html=True,
