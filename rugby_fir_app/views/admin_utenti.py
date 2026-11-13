@@ -1,3 +1,4 @@
+# Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import io
 import streamlit as st
 import pandas as pd
@@ -25,13 +26,15 @@ def render_admin_utenti(t: dict):
     n_admin = sum(1 for u in users if u.get("role") == "admin")
     n_viewer = sum(1 for u in users if u.get("role") == "viewer")
     n_temp = sum(1 for u in users if u.get("must_change_password"))
+    n_terms = sum(1 for u in users if u.get("has_accepted_terms"))
 
     # KPI Row
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Profili Utente Totali", f"{n_total}", "Account attivi")
     k2.metric("Amministratori (Full)", f"{n_admin}", "Gestione e configurazione")
     k3.metric("Visualizzatori (Staff)", f"{n_viewer}", "Consultazione & PDF")
     k4.metric("Password Provvisorie", f"{n_temp}", "In attesa di primo cambio")
+    k5.metric("Privacy Accettata", f"{n_terms}/{n_total}", "Clickwrap GDPR & IP")
 
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -390,6 +393,13 @@ def render_admin_utenti(t: dict):
             else ' <span style="background:#DCFCE7; color:#15803D; padding:2px 8px; border-radius:4px; font-size:0.70rem; font-weight:700; border:1px solid #86EFAC;">✓ PASSWORD DEFINITIVA</span>'
         )
 
+        has_acc = u.get("has_accepted_terms", False)
+        terms_badge = (
+            ' <span style="background:#DCFCE7; color:#15803D; padding:2px 8px; border-radius:4px; font-size:0.70rem; font-weight:700; border:1px solid #86EFAC;">✓ PRIVACY & IP ACCETTATI</span>'
+            if has_acc
+            else ' <span style="background:#FEE2E2; color:#B91C1C; padding:2px 8px; border-radius:4px; font-size:0.70rem; font-weight:800; border:1px solid #FCA5A5;">⏳ PRIVACY DA ACCETTARE</span>'
+        )
+
         prim_tag = ' <span style="background:#FEF3C7; color:#92400E; padding:2px 6px; border-radius:4px; font-size:0.68rem; font-weight:700;">DEFAULT</span>' if is_prim else ""
         self_tag = ' <span style="background:#DCFCE7; color:#166534; padding:2px 6px; border-radius:4px; font-size:0.68rem; font-weight:700;">TU</span>' if is_self else ""
 
@@ -400,7 +410,7 @@ def render_admin_utenti(t: dict):
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                         <div>
                             <div style="font-size:1.02rem; font-weight:800; color:#0F172A;">
-                                {u_fn} <span style="font-size:0.82rem; font-weight:600; color:#64748B;">({u_email})</span> {prim_tag} {self_tag} {pw_badge}
+                                {u_fn} <span style="font-size:0.82rem; font-weight:600; color:#64748B;">({u_email})</span> {prim_tag} {self_tag} {pw_badge} {terms_badge}
                             </div>
                             <div style="font-size:0.74rem; color:#64748B; margin-top:2px;">
                                 Username: <b>@{u_name}</b> &bull; Creato il: <b>{u_created}</b> &bull; Ultimo accesso: <b>{u_login}</b>

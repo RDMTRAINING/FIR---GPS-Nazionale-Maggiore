@@ -1,3 +1,4 @@
+# Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import sys
 import importlib
@@ -59,6 +60,12 @@ def main():
 
     cur_user = st.session_state.get("current_user", {})
     user_role = st.session_state.get("user_role", "viewer")
+
+    # Interceptor Clickwrap Agreement Obbligatorio (Privacy, GDPR & Proprietà Intellettuale RDM)
+    if not cur_user.get("has_accepted_terms", False):
+        auth.render_terms_agreement_page(t, cur_user)
+        return
+
     user_fullname = cur_user.get("full_name", "Utente FIR")
     username = cur_user.get("username", "utente")
 
@@ -237,6 +244,15 @@ def main():
             unsafe_allow_html=True,
         )
 
+        st.markdown(
+            """
+            <div style="text-align:center; padding:12px 4px 6px 4px; font-size:0.68rem; color:#94A3B8; opacity:0.85;">
+                © 2026 - Generato tramite tecnologia proprietaria RDM
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     page = st.session_state["active_page"]
     allowed_viewer_pages = (
         "analisi_sessione_giornata",
@@ -302,6 +318,15 @@ def main():
     # Fallback su Home
     else:
         views.dashboard_home.render_dashboard_home(t)
+
+    st.markdown(
+        """
+        <div style="text-align:center; padding:24px 0 12px 0; font-size:0.72rem; color:#64748B; border-top:1px solid #E2E8F0; margin-top:36px;">
+            © 2026 - Generato tramite tecnologia proprietaria RDM
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":

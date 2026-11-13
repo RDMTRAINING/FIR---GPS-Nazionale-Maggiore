@@ -1,3 +1,4 @@
+# Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import json
 import hashlib
@@ -172,6 +173,7 @@ def init_auth():
                 "last_login": None,
                 "is_primary": True,
                 "must_change_password": False,
+                "has_accepted_terms": True,
             },
             {
                 "username": "staff_fir",
@@ -184,6 +186,7 @@ def init_auth():
                 "last_login": None,
                 "is_primary": False,
                 "must_change_password": False,
+                "has_accepted_terms": False,
             },
         ]
         with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -204,6 +207,9 @@ def get_users() -> List[Dict]:
                     changed = True
                 if "must_change_password" not in u:
                     u["must_change_password"] = False
+                    changed = True
+                if "has_accepted_terms" not in u:
+                    u["has_accepted_terms"] = True if (u.get("role") == "admin" and u.get("is_primary")) else False
                     changed = True
             if changed:
                 _save_users(users)
@@ -251,6 +257,7 @@ def verify_user(username: str, password: str) -> Optional[Dict]:
             "last_login": matched.get("last_login"),
             "is_primary": matched.get("is_primary", False),
             "must_change_password": matched.get("must_change_password", False),
+            "has_accepted_terms": bool(matched.get("has_accepted_terms", False)),
         }
     return None
 
@@ -304,6 +311,7 @@ def create_user(
         "last_login": None,
         "is_primary": False,
         "must_change_password": bool(must_change_password),
+        "has_accepted_terms": False,
     }
     users.append(new_user)
     _save_users(users)
@@ -434,7 +442,7 @@ def admin_reset_password_auto(username: str, must_change_password: bool = True) 
             _save_users(users)
             return True, f"Password provvisoria generata con successo per '{u_clean}'!", temp_pw
 
-    return False, "Utente non trovato.", ""
+    return False, "Utente non trovato."
 
 
 def admin_update_user_role(username: str, new_role: str) -> Tuple[bool, str]:
@@ -471,3 +479,168 @@ def admin_delete_user(username: str, current_username: str) -> Tuple[bool, str]:
             return True, f"Utente '{u_clean}' eliminato definitivamente."
 
     return False, "Utente non trovato."
+
+
+
+
+def accept_terms(username: str) -> bool:
+    """Aggiorna il flag has_accepted_terms a True e registra il timestamp di accettazione nel database utenti."""
+    u_clean = username.strip().lower()
+    users = get_users()
+    for u in users:
+        if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
+            u["has_accepted_terms"] = True
+            u["terms_accepted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _save_users(users)
+            return True
+    return False
+
+
+def reset_terms_acceptance(username: str) -> bool:
+    """Permette all'amministratore di richiedere una nuova accettazione dei termini a un utente."""
+    u_clean = username.strip().lower()
+    users = get_users()
+    for u in users:
+        if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
+            u["has_accepted_terms"] = False
+            u["terms_accepted_at"] = None
+            _save_users(users)
+            return True
+    return False
+
+
+def render_terms_agreement_page(t: dict, user_info: dict):
+    """
+    Renderizza il Clickwrap Agreement obbligatorio al primo accesso per Staff Tecnico e Medico.
+    Blocca l'accesso a tutta la piattaforma finché l'utente non scarica/legge l'Atto di Nomina,
+    accetta la checkbox vincolante e clicca su 'Accedi alla Piattaforma'.
+    """
+    import streamlit as st
+    try:
+        from config import get_logo_base64
+    except ImportError:
+        from rugby_fir_app.config import get_logo_base64
+
+    b64_logo = get_logo_base64()
+    logo_img_html = (
+        f'<img src="data:image/png;base64,{b64_logo}" style="height:76px; width:auto; filter: drop-shadow(0 4px 10px rgba(0,0,0,0.35));" alt="FIR Logo">'
+        if b64_logo
+        else '<div style="width:68px; height:68px; border-radius:50%; background:#0066B2; border:2.5px solid #D4AF37; display:flex; align-items:center; justify-content:center; color:#FFFFFF; font-weight:800; font-size:1.4rem;">FIR</div>'
+    )
+
+    _, col_center, _ = st.columns([1, 3.2, 1])
+
+    with col_center:
+        st.markdown("<div style='height:24px;'></div>", unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="background: linear-gradient(135deg, #002B49 0%, #0066B2 100%); border-radius:16px 16px 0 0; padding:24px 28px 20px 28px; text-align:center; border:1px solid rgba(212,175,55,0.4); border-bottom:3px solid #D4AF37; box-shadow:0 8px 24px rgba(0,43,73,0.35);">
+                <div style="display:flex; justify-content:center; margin-bottom:12px;">
+                    {logo_img_html}
+                </div>
+                <div style="font-size:0.75rem; font-weight:800; letter-spacing:0.12em; text-transform:uppercase; color:#D4AF37; margin-bottom:4px;">
+                    FEDERAZIONE ITALIANA RUGBY &bull; AREA PERFORMANCE & GPS
+                </div>
+                <div style="font-size:1.55rem; font-weight:800; letter-spacing:-0.02em; color:#FFFFFF; margin:0;">
+                    FIR GPS PLATFORM
+                </div>
+                <div style="font-size:0.86rem; color:#93C5FD; font-weight:600; margin-top:4px;">
+                    Accreditamento Staff Tecnico & Medico &bull; Conformità GDPR & Proprietà Intellettuale
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.container():
+            st.markdown(
+                """
+                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-top:none; border-radius:0 0 16px 16px; padding:30px 32px 24px 32px; box-shadow:0 12px 28px rgba(15,23,42,0.08); margin-bottom:16px;">
+                    <div style="font-size:1.24rem; font-weight:800; color:#002B49; margin-bottom:12px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
+                        Termini d'Uso, Riservatezza e Proprietà Intellettuale
+                    </div>
+                    <p style="font-size:0.88rem; color:#334155; line-height:1.6; margin-bottom:16px;">
+                        Benvenuto nella Piattaforma Analytics della Nazionale Italiana Rugby. L'accesso a questo sistema è strettamente personale e riservato ai membri dello Staff Tecnico e Medico autorizzati. Prima di procedere, ti invitiamo a leggere e accettare le seguenti condizioni operative:
+                    </p>
+                    <div style="background:#F8FAFC; border-left:4px solid #0066B2; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:14px;">
+                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                            1. Proprietà Intellettuale e Licenza d'Uso
+                        </div>
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                            Questa piattaforma web, incluse le architetture di database, le logiche di calcolo del microciclo, gli algoritmi di mapping e le interfacce, costituisce <b>tecnologia proprietaria esclusiva di Riccardo Di Maio (RDM)</b>. Il sistema è concesso in mero utilizzo funzionale temporaneo. È severamente vietato riprodurre, copiare, analizzare (reverse engineering) o cedere l'accesso a terze parti senza l'esplicita autorizzazione dell'autore.
+                        </div>
+                    </div>
+                    <div style="background:#F8FAFC; border-left:4px solid #D4AF37; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:14px;">
+                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                            2. Trattamento dei Dati Sensibili (GDPR)
+                        </div>
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                            Il database contiene categorie particolari di dati personali (Art. 9 Reg. UE 2016/679), tra cui parametri fisici e metriche di prestazione degli atleti. L'utente si impegna a trattare i dati esclusivamente per finalità tecniche e mediche, e a non diffonderli al di fuori degli ambienti protetti della F.I.R.
+                        </div>
+                    </div>
+                    <div style="background:#F8FAFC; border-left:4px solid #E11D48; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:18px;">
+                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                            3. Sicurezza delle Credenziali
+                        </div>
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                            L'utente è l'unico responsabile della segretezza della propria password. Eventuali Data Breach derivanti da gestione negligente del proprio account ricadranno sotto la responsabilità dell'utente stesso.
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Download documento PDF Atto di Nomina
+            doc_path = os.path.join(os.path.dirname(__file__), "assets", "Atto_Nomina_Privacy_FIR_RDM_v2.pdf")
+            if os.path.exists(doc_path):
+                with open(doc_path, "rb") as f_pdf:
+                    pdf_data = f_pdf.read()
+                st.download_button(
+                    label="📄 Scarica l'Atto di Nomina completo per i dettagli sulla Privacy",
+                    data=pdf_data,
+                    file_name="Atto_Nomina_Privacy_FIR_RDM_v2.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="btn_download_atto_nomina_pdf",
+                )
+            else:
+                st.info("Atto di Nomina Privacy e IP in fase di caricamento negli asset di sistema.")
+
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+            # Checkbox obbligatoria con stringa esatta
+            chk_label = "Dichiaro di aver letto, compreso e accettato i Termini d'Uso, i vincoli di Proprietà Intellettuale (Tecnologia RDM) e le direttive sulla Privacy dei dati."
+            accepted = st.checkbox(chk_label, key="chk_clickwrap_terms")
+
+            st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+            col_btn1, col_btn2 = st.columns([3, 1.2])
+            with col_btn1:
+                btn_confirm = st.button("Accedi alla Piattaforma", type="primary", use_container_width=True, disabled=not accepted, key="btn_confirm_clickwrap")
+                if btn_confirm:
+                    if accepted:
+                        uname = user_info.get("username", "")
+                        accept_terms(uname)
+                        if "current_user" in st.session_state:
+                            st.session_state["current_user"]["has_accepted_terms"] = True
+                        st.success("Accettazione registrata con successo! Accesso alla piattaforma in corso...")
+                        st.rerun()
+                    else:
+                        st.warning("È obbligatorio spuntare la casella di accettazione prima di accedere alla piattaforma.")
+
+            with col_btn2:
+                if st.button("Esci / Logout", type="secondary", use_container_width=True, key="btn_logout_from_terms"):
+                    st.session_state["authenticated"] = False
+                    st.session_state.pop("current_user", None)
+                    st.session_state.pop("user_role", None)
+                    st.rerun()
+
+            st.markdown(
+                """
+                <div style="text-align:center; padding-top:18px; font-size:0.72rem; color:#64748B;">
+                    © 2026 - Generato tramite tecnologia proprietaria RDM &bull; Tutti i diritti riservati
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )

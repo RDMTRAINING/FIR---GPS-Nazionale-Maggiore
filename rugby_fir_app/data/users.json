@@ -9,7 +9,8 @@
     "last_login": "2026-11-11 18:50:40",
     "is_primary": true,
     "email": "admin@federugby.it",
-    "must_change_password": false
+    "must_change_password": false,
+    "has_accepted_terms": false
   },
   {
     "username": "staff_fir",
@@ -18,10 +19,12 @@
     "salt": "5d4d0403c02d06477c5e6df2503dac0e",
     "password_hash": "06a0db212c58f22ac6cf14a915131981a70af133c1edd91edf12f2950268160b",
     "created_at": "2026-11-05 23:08:51",
-    "last_login": "2026-11-06 17:37:07",
+    "last_login": "2026-11-13 10:55:04",
     "is_primary": false,
     "email": "staff_fir@federugby.it",
-    "must_change_password": false
+    "must_change_password": false,
+    "has_accepted_terms": false,
+    "terms_accepted_at": null
   },
   {
     "username": "agerini",
@@ -33,7 +36,8 @@
     "created_at": "2026-11-09 16:50:29",
     "last_login": "2026-11-09 16:50:37",
     "is_primary": false,
-    "must_change_password": false
+    "must_change_password": false,
+    "has_accepted_terms": false
   },
   {
     "username": "gsanguin",
@@ -45,6 +49,7 @@
     "created_at": "2026-11-09 16:50:29",
     "last_login": "2026-11-09 16:50:37",
     "is_primary": false,
-    "must_change_password": false
+    "must_change_password": false,
+    "has_accepted_terms": false
   }
 ]

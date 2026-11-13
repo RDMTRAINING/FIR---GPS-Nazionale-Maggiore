@@ -1,3 +1,4 @@
+# Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import base64
 import json

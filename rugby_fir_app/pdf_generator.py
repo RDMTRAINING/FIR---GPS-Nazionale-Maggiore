@@ -1,3 +1,4 @@
+# Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import re
 import io
@@ -57,13 +58,13 @@ def _build_pdf_with_footer(doc, elements, brand="FEDERAZIONE ITALIANA RUGBY • 
 
     def _footer(canvas, d):
         canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
+        canvas.setStrokeColor(colors.HexColor("#031926"))
         canvas.setLineWidth(0.5)
         canvas.line(16, 16, width_pt - 16, 16)
         canvas.setFont("Helvetica", 6.8)
-        canvas.setFillColor(colors.HexColor("#64748B"))
-        canvas.drawString(16, 8, f"{brand}   |   Report generato il {generato}")
-        canvas.drawRightString(width_pt - 16, 8, f"Pagina {d.page}")
+        canvas.setFillColor(colors.HexColor("#031926"))
+        canvas.drawString(16, 8, "Generato tramite tecnologia proprietaria RDM - Tutti i diritti riservati")
+        canvas.drawRightString(width_pt - 16, 8, f"{brand}   |   Pagina {d.page}")
         canvas.restoreState()
 
     doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
@@ -4122,6 +4123,18 @@ def _draw_schieramento_pitch_on_canvas(
         c.setFillColor(colors.HexColor("#334155"))
         c.setFont("Helvetica", 5.2)
         c.drawString(b2_x + 48, line_y, desc)
+
+    # Footer Watermark Proprietà Intellettuale RDM
+    w_pt, _ = landscape(A4)
+    c.saveState()
+    c.setStrokeColor(colors.HexColor("#031926"))
+    c.setLineWidth(0.5)
+    c.line(16, 10, w_pt - 16, 10)
+    c.setFont("Helvetica", 6.2)
+    c.setFillColor(colors.HexColor("#031926"))
+    c.drawString(16, 4, "Generato tramite tecnologia proprietaria RDM - Tutti i diritti riservati")
+    c.drawRightString(w_pt - 16, 4, "FEDERAZIONE ITALIANA RUGBY • SCHIERAMENTO IN CAMPO (1-23)")
+    c.restoreState()
 
 
 def crea_pdf_schieramento_campo(
