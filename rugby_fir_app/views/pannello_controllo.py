@@ -1003,10 +1003,13 @@ def _fragment_raduni_manage(camps_df: pd.DataFrame, players_df: pd.DataFrame):
     idx_cid = camp_ids.index(st.session_state["camp_sel_manage"]) if st.session_state["camp_sel_manage"] in camp_ids else 0
     active_cid = fc3.selectbox("Seleziona Settimana Raduno Attiva", camp_ids, index=idx_cid, format_func=lambda x: camp_labels.get(x, str(x)), key="camp_sel_manage")
 
-    # Sincronizza automaticamente con la barra laterale!
-    if cur_global_camp is None or int(cur_global_camp.get("id", -1)) != int(active_cid):
-        import global_state
-        global_state.sync_selected_camp_by_id(active_cid)
+    # Sincronizza con la barra laterale solo se viene selezionato un nuovo raduno attivo
+    prev_managed_cid = st.session_state.get("_last_synced_camp_sel_manage")
+    if prev_managed_cid != active_cid:
+        st.session_state["_last_synced_camp_sel_manage"] = active_cid
+        if cur_global_camp is not None and int(cur_global_camp.get("id", -1)) != int(active_cid):
+            import global_state
+            global_state.sync_selected_camp_by_id(active_cid)
 
     active_camp = c_filt[c_filt["id"] == active_cid].iloc[0]
     cp_df = utils.get_camp_players_df(active_cid)
