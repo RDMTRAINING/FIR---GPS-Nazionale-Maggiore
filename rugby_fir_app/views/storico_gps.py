@@ -121,7 +121,7 @@ def render_storico_gps(t: dict):
         use_container_width=True,
         type="primary",
         key=f"dl_raw_csv_{active_team}",
-        help="Esportazione sterilizzata dei soli dati grezzi base (GPS & VBT) senza metriche o algoritmi proprietari RDM",
+        help="Esportazione sterilizzata dei soli dati grezzi base (GPS & VBT) senza metriche o algoritmi proprietari",
     )
 
     is_admin = st.session_state.get("user_role") == "admin"

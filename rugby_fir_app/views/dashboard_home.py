@@ -95,7 +95,7 @@ def render_dashboard_home(t: dict):
             <span style="font-size:1.1rem;">🛡️</span>
             <div>
                 <div style="font-size:0.80rem; font-weight:700; color:#0F172A;">Esportazione Dati Base per la Federazione (Raw Data)</div>
-                <div style="font-size:0.70rem; color:#64748B;">Estrazione sterilizzata delle metriche grezze (Distanze, HSR, HMPD, Velocità, Acc/Dec e VBT). Metriche proprietarie RDM protette.</div>
+                <div style="font-size:0.70rem; color:#64748B;">Estrazione sterilizzata delle metriche grezze (Distanze, HSR, HMPD, Velocità, Acc/Dec e VBT). Metriche proprietarie.</div>
             </div>
         </div>
         """,
@@ -110,7 +110,7 @@ def render_dashboard_home(t: dict):
         type="primary",
         use_container_width=True,
         key="btn_export_raw_csv_dashboard",
-        help="Scarica il CSV con le metriche grezze di base senza algoritmi o benchmark proprietari RDM",
+        help="Scarica il CSV con le metriche grezze di base senza algoritmi o benchmark proprietari",
     )
 
     # --------------------------------------------------------------------------
