@@ -61,6 +61,7 @@ def render_login_page(t: dict):
                         if user_info:
                             st.session_state["authenticated"] = True
                             st.session_state["current_user"] = user_info
+                            st.session_state["username"] = user_info.get("username", username)
                             st.session_state["user_role"] = user_info["role"]
                             if user_info["role"] == "admin":
                                 st.session_state["active_page"] = "dashboard_home"

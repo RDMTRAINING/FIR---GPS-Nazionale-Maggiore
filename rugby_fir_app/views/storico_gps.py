@@ -98,8 +98,8 @@ def render_storico_gps(t: dict):
     rename_map = {"id": "ID", "team_name": "Squadra", "date_str": "G: Data"}
     rename_map.update(FIR_COL_LABELS)
 
-    top_bar1, top_bar2, top_bar3 = st.columns([2.0, 1.4, 1.4])
-    max_rows = top_bar2.selectbox("Righe mostrate a schermo", [100, 250, 500, 1500, 7000], index=1, key=f"hist_limit_{active_team}")
+    top_bar1, top_bar2, top_bar3, top_bar4 = st.columns([1.8, 1.1, 1.3, 1.5])
+    max_rows = top_bar2.selectbox("Righe a schermo", [100, 250, 500, 1500, 7000], index=1, key=f"hist_limit_{active_team}")
     top_bar1.caption(f"Record filtrati: **{len(filt):,}** (visualizzati i primi {min(len(filt), max_rows):,}) • Spunta **🗑️ Sel** per eliminare più tracce")
 
     csv_bytes = filt[show_cols].rename(columns=rename_map).to_csv(index=False).encode("utf-8")
@@ -110,6 +110,18 @@ def render_storico_gps(t: dict):
         mime="text/csv",
         use_container_width=True,
         key=f"dl_csv_{active_team}",
+    )
+
+    raw_csv_bytes = utils.get_sanitized_raw_export_csv(active_team if active_team != "archivio_oval" else "all")
+    top_bar4.download_button(
+        "Export Dati Base (Raw CSV)",
+        data=raw_csv_bytes,
+        file_name=f"FIR_Raw_Data_Base_{active_team}_{datetime.date.today().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        type="primary",
+        key=f"dl_raw_csv_{active_team}",
+        help="Esportazione sterilizzata dei soli dati grezzi base (GPS & VBT) senza metriche o algoritmi proprietari RDM",
     )
 
     is_admin = st.session_state.get("user_role") == "admin"

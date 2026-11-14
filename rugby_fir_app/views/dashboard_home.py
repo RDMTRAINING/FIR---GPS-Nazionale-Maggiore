@@ -86,6 +86,34 @@ def render_dashboard_home(t: dict):
     )
 
     # --------------------------------------------------------------------------
+    # BARRA CONDIVISIONE DATI FEDERALE (RAW DATA STERILIZZATO)
+    # --------------------------------------------------------------------------
+    c_raw_info, c_raw_btn = st.columns([3.2, 1.3])
+    c_raw_info.markdown(
+        """
+        <div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+            <span style="font-size:1.1rem;">🛡️</span>
+            <div>
+                <div style="font-size:0.80rem; font-weight:700; color:#0F172A;">Esportazione Dati Base per la Federazione (Raw Data)</div>
+                <div style="font-size:0.70rem; color:#64748B;">Estrazione sterilizzata delle metriche grezze (Distanze, HSR, HMPD, Velocità, Acc/Dec e VBT). Metriche proprietarie RDM protette.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    raw_csv_bytes = utils.get_sanitized_raw_export_csv("nazionale")
+    c_raw_btn.download_button(
+        label="Export Dati Base (Raw CSV)",
+        data=raw_csv_bytes,
+        file_name=f"FIR_Raw_Data_Base_Nazionale_{datetime.date.today().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        type="primary",
+        use_container_width=True,
+        key="btn_export_raw_csv_dashboard",
+        help="Scarica il CSV con le metriche grezze di base senza algoritmi o benchmark proprietari RDM",
+    )
+
+    # --------------------------------------------------------------------------
     # SEZIONE 1: STATUS ATLETI IN RADUNO OGGI
     # --------------------------------------------------------------------------
     n_tot_camp = len(camp_players) if not camp_players.empty else len(sub_sess["player_name"].unique()) if not sub_sess.empty else 0

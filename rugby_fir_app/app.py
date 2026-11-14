@@ -68,6 +68,7 @@ def main():
 
     user_fullname = cur_user.get("full_name", "Utente FIR")
     username = cur_user.get("username", "utente")
+    st.session_state["username"] = username
 
     if "active_page" not in st.session_state:
         st.session_state["active_page"] = "dashboard_home"

@@ -53,8 +53,28 @@ def fig_to_rl_image(fig, width=535, height=210):
 
 
 def _build_pdf_with_footer(doc, elements, brand="FEDERAZIONE ITALIANA RUGBY • GPS ANALYTICS"):
+    import datetime
     generato = pd.Timestamp.now().strftime("%d/%m/%Y %H:%M")
     width_pt = getattr(doc, "pagesize", A4)[0]
+
+    # Task 1: Watermark invisibile di tracciamento nei PDF (Fingerprinting)
+    # Recupera lo username dell'utente loggato dalla sessione corrente di Streamlit
+    user_str = "staff_fir"
+    try:
+        import streamlit as _st
+        if hasattr(_st, "session_state"):
+            user_str = (
+                _st.session_state.get("username")
+                or (_st.session_state.get("current_user", {}).get("username") if isinstance(_st.session_state.get("current_user"), dict) else None)
+                or "staff_fir"
+            )
+    except Exception:
+        user_str = "staff_fir"
+    if not user_str:
+        user_str = "staff_fir"
+
+    ts_fingerprint = datetime.datetime.now().strftime("%Y%m%d%H%M")
+    watermark_text = f"UID: {user_str} - {ts_fingerprint}"
 
     def _footer(canvas, d):
         canvas.saveState()
@@ -66,6 +86,12 @@ def _build_pdf_with_footer(doc, elements, brand="FEDERAZIONE ITALIANA RUGBY • 
         canvas.drawString(16, 8, "MOV3 S.r.l. - Tutti i diritti riservati")
         canvas.setFillColor(colors.HexColor("#94A3B8"))
         canvas.drawRightString(width_pt - 16, 8, f"{brand}   |   Pagina {d.page}")
+
+        # Watermark invisibile a occhio nudo (3pt, grigio mimetico (0.95, 0.95, 0.95) / #F5F7FA)
+        # Posizionato al limite del foglio, selezionabile col cursore ed estraibile dal flusso vettoriale
+        canvas.setFont("Helvetica", 3)
+        canvas.setFillColorRGB(0.95, 0.95, 0.95)
+        canvas.drawString(10, 4, watermark_text)
         canvas.restoreState()
 
     doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)

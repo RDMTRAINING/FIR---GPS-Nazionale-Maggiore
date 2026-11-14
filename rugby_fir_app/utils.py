@@ -5367,6 +5367,139 @@ def delete_gymaware_all() -> int:
     return count
 
 
+# ==============================================================================
+# ESPORTAZIONE SELETTIVA "RAW DATA" (CSV) - DIFESA KNOW-HOW RDM & FIR
+# ==============================================================================
+def get_sanitized_raw_export_df(team_type: str = "all") -> pd.DataFrame:
+    """
+    Estrae ed esporta esclusivamente i dati base/raw (GPS e VBT GymAware)
+    sterilizzando completamente il dataset:
+    - Include SOLO colonne permesse:
+        Date, Player_Name, Role, Session_Type, Total_Distance_m,
+        Work_Rate_m_min, Max_Speed_kmh, HSR_m, HMPD_m,
+        Accelerations, Decelerations, Mean_Velocity_ms, Peak_Power_w
+    - Esclude tassativamente ogni metrica calcolata proprietaria RDM:
+        ACWR_6_Weeks, Strain, Monotonia_Foster, Profile_Max_Vel_Ratio,
+        deviazioni standard per ruolo e benchmark di franchigia.
+    """
+    df_gps = get_gps_history_df(team_type)
+    if df_gps.empty:
+        df_gps = get_gps_history_df("all")
+    if df_gps.empty:
+        return pd.DataFrame(columns=[
+            "Date", "Player_Name", "Role", "Session_Type",
+            "Total_Distance_m", "Work_Rate_m_min", "Max_Speed_kmh",
+            "HSR_m", "HMPD_m", "Accelerations", "Decelerations",
+            "Mean_Velocity_ms", "Peak_Power_w"
+        ])
+
+    df_master = df_gps.copy()
+
+    # Normalizzazione Anagrafica e Sessione
+    if "date" in df_master.columns:
+        df_master["Date"] = pd.to_datetime(df_master["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    elif "date_str" in df_master.columns:
+        df_master["Date"] = df_master["date_str"].astype(str)
+    else:
+        df_master["Date"] = ""
+
+    df_master["Player_Name"] = df_master["player_name"].astype(str).str.strip()
+    df_master["Role"] = df_master["role"].astype(str).str.strip()
+    df_master["Session_Type"] = df_master["session_name"].apply(detect_fir_session_type)
+
+    # Metriche GPS Base
+    df_master["Total_Distance_m"] = pd.to_numeric(df_master.get("distance_m", 0), errors="coerce").fillna(0).round(1)
+    df_master["Work_Rate_m_min"] = pd.to_numeric(df_master.get("m_per_min", 0), errors="coerce").fillna(0).round(1)
+    df_master["Max_Speed_kmh"] = pd.to_numeric(df_master.get("v_max", 0), errors="coerce").fillna(0).round(2)
+
+    # HSR: velocità > 20 km/h (speed_20_25 + speed_25_72)
+    sp20 = pd.to_numeric(df_master.get("speed_20_25", 0), errors="coerce").fillna(0)
+    sp25 = pd.to_numeric(df_master.get("speed_25_72", 0), errors="coerce").fillna(0)
+    df_master["HSR_m"] = (sp20 + sp25).round(1)
+
+    # HMPD: High Metabolic Power Distance > 25.5 W (mp_25_35 + mp_35_50 + mp_50_100)
+    mp25 = pd.to_numeric(df_master.get("mp_25_35", 0), errors="coerce").fillna(0)
+    mp35 = pd.to_numeric(df_master.get("mp_35_50", 0), errors="coerce").fillna(0)
+    mp50 = pd.to_numeric(df_master.get("mp_50_100", 0), errors="coerce").fillna(0)
+    df_master["HMPD_m"] = (mp25 + mp35 + mp50).round(1)
+
+    # Accelerazioni e Decelerazioni
+    df_master["Accelerations"] = pd.to_numeric(df_master.get("acc_volume", 0), errors="coerce").fillna(0).round(0).astype(int)
+    df_master["Decelerations"] = 0
+
+    # Integrazione VBT da GymAware (Mean Velocity m/s e Peak Power W)
+    df_vbt = pd.DataFrame()
+    if os.path.exists(GYMAWARE_DB_PATH):
+        try:
+            conn = get_gymaware_conn()
+            raw_gym = pd.read_sql_query("SELECT athlete_name, date, mean_velocity, mean_power FROM gymaware_data", conn)
+            conn.close()
+            if not raw_gym.empty:
+                raw_gym["date_parsed"] = pd.to_datetime(raw_gym["date"], format="%d/%m/%Y", errors="coerce").dt.strftime("%Y-%m-%d")
+                mask_na = raw_gym["date_parsed"].isna()
+                if mask_na.any():
+                    raw_gym.loc[mask_na, "date_parsed"] = pd.to_datetime(raw_gym.loc[mask_na, "date"], errors="coerce").dt.strftime("%Y-%m-%d")
+                raw_gym["_p_norm"] = raw_gym["athlete_name"].astype(str).str.strip().str.upper()
+                df_vbt = raw_gym.groupby(["_p_norm", "date_parsed"]).agg({
+                    "mean_velocity": "mean",
+                    "mean_power": "max"
+                }).reset_index()
+                df_vbt.rename(columns={
+                    "date_parsed": "_d_norm",
+                    "mean_velocity": "Mean_Velocity_ms",
+                    "mean_power": "Peak_Power_w"
+                }, inplace=True)
+        except Exception:
+            df_vbt = pd.DataFrame()
+
+    df_master["_p_norm"] = df_master["Player_Name"].str.upper()
+    df_master["_d_norm"] = df_master["Date"]
+
+    if not df_vbt.empty:
+        df_merged = pd.merge(df_master, df_vbt, on=["_p_norm", "_d_norm"], how="left")
+    else:
+        df_merged = df_master
+        df_merged["Mean_Velocity_ms"] = np.nan
+        df_merged["Peak_Power_w"] = np.nan
+
+    df_merged["Mean_Velocity_ms"] = df_merged["Mean_Velocity_ms"].round(2)
+    df_merged["Peak_Power_w"] = df_merged["Peak_Power_w"].round(1)
+
+    # Whitelist tassativa: nessuna colonna proprietaria viene inclusa
+    allowed_columns = [
+        "Date",
+        "Player_Name",
+        "Role",
+        "Session_Type",
+        "Total_Distance_m",
+        "Work_Rate_m_min",
+        "Max_Speed_kmh",
+        "HSR_m",
+        "HMPD_m",
+        "Accelerations",
+        "Decelerations",
+        "Mean_Velocity_ms",
+        "Peak_Power_w",
+    ]
+
+    df_export = df_merged[allowed_columns].copy()
+
+    # Assicurazione di sicurezza: drop preventivo di qualsiasi colonna proprietaria RDM
+    banned_keywords = ["acwr", "strain", "monotoni", "foster", "profile_max_vel", "benchmark", "franchigia"]
+    cols_to_drop = [c for c in df_export.columns if any(bk in c.lower() for bk in banned_keywords)]
+    if cols_to_drop:
+        df_export.drop(columns=cols_to_drop, inplace=True)
+
+    # Ordinamento per Data discendente e Giocatore
+    df_export.sort_values(by=["Date", "Player_Name"], ascending=[False, True], inplace=True)
+    return df_export
+
+
+def get_sanitized_raw_export_csv(team_type: str = "all") -> bytes:
+    df_export = get_sanitized_raw_export_df(team_type)
+    return df_export.to_csv(index=False).encode("utf-8")
+
+
 
 
 
