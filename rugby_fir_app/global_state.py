@@ -151,22 +151,11 @@ def sync_selected_camp_by_id(camp_id: int):
         st.session_state["global_camp_label"] = lbl
         st.session_state["global_selected_camp_obj"] = cr.to_dict()
         st.session_state["_target_sb_global_sel_camp"] = lbl
-
-        # Assegnazione protetta: se il widget è già stato istanziato in questo ciclo, non sollevare eccezioni
-        try:
-            st.session_state["sb_global_sel_camp"] = lbl
-        except Exception:
-            pass
-
         st.session_state["_prev_sb_global_sel_camp"] = lbl
         # reset session key to default for new camp
         st.session_state.pop("global_selected_session_key", None)
         st.session_state.pop("global_selected_date", None)
         st.session_state.pop("global_selected_session_name", None)
-        try:
-            st.session_state.pop("sb_global_sel_sess", None)
-        except Exception:
-            pass
 
 
 def sync_selected_camp_by_date(date_str: str):
@@ -196,10 +185,6 @@ def sync_selected_session(date_str: str, session_name: str):
     st.session_state["global_selected_date"] = d_clean
     st.session_state["global_selected_session_name"] = s_clean
     st.session_state["_target_sb_global_sel_sess"] = key
-    try:
-        st.session_state["sb_global_sel_sess"] = key
-    except Exception:
-        pass
     st.session_state["global_selected_type"] = utils.get_session_assigned_type(d_clean, s_clean)
 
 
@@ -223,10 +208,6 @@ def sync_selected_match(match_date_or_name: str):
         st.session_state["global_selected_match_comp"] = m_comp
         st.session_state["global_selected_match_label"] = m_lbl
         st.session_state["_target_sb_global_sel_match"] = m_lbl
-        try:
-            st.session_state["sb_global_sel_match"] = m_lbl
-        except Exception:
-            pass
 
 
 def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
@@ -308,18 +289,16 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
     if "_target_sb_global_sel_camp" in st.session_state:
         target_camp = st.session_state.pop("_target_sb_global_sel_camp")
         if target_camp in camp_options:
-            cur_camp_lbl = target_camp
+            st.session_state["sb_global_sel_camp"] = target_camp
             st.session_state["global_camp_label"] = target_camp
 
-    try:
+    if st.session_state.get("sb_global_sel_camp") not in camp_options:
         st.session_state["sb_global_sel_camp"] = cur_camp_lbl
-    except Exception:
-        pass
 
     sel_camp = st.selectbox(
         "Settimana Raduno FIR:",
         camp_options,
-        index=camp_options.index(cur_camp_lbl) if cur_camp_lbl in camp_options else 0,
+        index=camp_options.index(st.session_state["sb_global_sel_camp"]),
         key="sb_global_sel_camp",
     )
 
@@ -387,17 +366,15 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         if "_target_sb_global_sel_sess" in st.session_state:
             target_sess = st.session_state.pop("_target_sb_global_sel_sess")
             if target_sess in sess_labels:
-                default_sess_idx = sess_labels.index(target_sess)
+                st.session_state["sb_global_sel_sess"] = target_sess
 
-        try:
+        if st.session_state.get("sb_global_sel_sess") not in sess_labels:
             st.session_state["sb_global_sel_sess"] = sess_labels[default_sess_idx]
-        except Exception:
-            pass
 
         sel_sess_lbl = st.selectbox(
             "Seduta GPS da Analizzare:",
             sess_labels,
-            index=default_sess_idx,
+            index=sess_labels.index(st.session_state["sb_global_sel_sess"]),
             key="sb_global_sel_sess",
         )
 
@@ -496,17 +473,16 @@ def render_sidebar_global_panel(hist_df: pd.DataFrame = None):
         if "_target_sb_global_sel_match" in st.session_state:
             target_match = st.session_state.pop("_target_sb_global_sel_match")
             if target_match in m_labels:
-                cur_m_lbl = target_match
+                st.session_state["sb_global_sel_match"] = target_match
+                st.session_state["global_selected_match_label"] = target_match
 
-        try:
+        if st.session_state.get("sb_global_sel_match") not in m_labels:
             st.session_state["sb_global_sel_match"] = cur_m_lbl
-        except Exception:
-            pass
 
         sel_m_lbl = st.selectbox(
             "Gara (Trombinoscopio Match):",
             m_labels,
-            index=m_labels.index(cur_m_lbl),
+            index=m_labels.index(st.session_state["sb_global_sel_match"]),
             key="sb_global_sel_match",
         )
         st.session_state["global_selected_match_label"] = sel_m_lbl
