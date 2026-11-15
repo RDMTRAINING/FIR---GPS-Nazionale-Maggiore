@@ -3713,41 +3713,30 @@ def clear_photo_cache():
     _PHOTO_CACHE.clear()
 
 def get_player_photo_mappings() -> dict:
-    """Carica la mappatura ufficiale nome giocatore -> percorso relativo foto."""
-    if os.path.exists(PHOTO_MAPPINGS_FILE):
-        try:
-            with open(PHOTO_MAPPINGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    if "mappings" in data and isinstance(data["mappings"], dict):
-                        return data["mappings"]
-                    return data
-        except Exception:
-            pass
+    """Carica la mappatura ufficiale nome giocatore -> percorso relativo foto sincronizzata col Cloud."""
+    data = cloud_storage.load_json_with_cloud_sync("player_photos.json", PHOTO_MAPPINGS_FILE, default_factory=dict)
+    if isinstance(data, dict):
+        if "mappings" in data and isinstance(data["mappings"], dict):
+            return data["mappings"]
+        return data
     return {}
 
 def get_player_photo_doubts() -> dict:
     """Restituisce eventuali dubbi di abbinamento foto rilevati automaticamente."""
-    if os.path.exists(PHOTO_MAPPINGS_FILE):
-        try:
-            with open(PHOTO_MAPPINGS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and "doubts" in data and isinstance(data["doubts"], dict):
-                    return data["doubts"]
-        except Exception:
-            pass
+    data = cloud_storage.load_json_with_cloud_sync("player_photos.json", PHOTO_MAPPINGS_FILE, default_factory=dict)
+    if isinstance(data, dict) and "doubts" in data and isinstance(data["doubts"], dict):
+        return data["doubts"]
     return {}
 
 def save_player_photo_mappings(mappings: dict, doubts: dict = None) -> bool:
-    """Salva la mappatura foto nel file JSON e svuota la cache delle immagini."""
+    """Salva la mappatura foto nel file JSON e sul Cloud Object Storage, svuotando la cache delle immagini."""
     try:
         payload = {
             "mappings": mappings,
             "doubts": doubts or {},
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
-        with open(PHOTO_MAPPINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        cloud_storage.save_json_with_cloud_sync("player_photos.json", PHOTO_MAPPINGS_FILE, payload)
         clear_photo_cache()
         return True
     except Exception as e:
