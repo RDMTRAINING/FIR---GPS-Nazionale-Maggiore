@@ -63,6 +63,7 @@ def get_fir_session_types() -> dict:
 
 def save_fir_session_types(types_map: dict):
     cloud_storage.save_json_with_cloud_sync("fir_session_types.json", FIR_SESSION_TYPES_PATH, types_map)
+    _clear_all_table_caches()
 
 
 def get_session_assigned_type(date_str: str, session_name: str) -> str:
@@ -100,6 +101,7 @@ def get_session_player_statuses() -> dict:
 
 def save_session_player_statuses(status_map: dict):
     cloud_storage.save_json_with_cloud_sync("session_player_status.json", SESSION_PLAYER_STATUS_PATH, status_map)
+    _clear_all_table_caches()
 
 
 # Alias per retrocompatibilità
@@ -130,12 +132,11 @@ def _parquet_path(table_name: str) -> str:
     return os.path.join(DATA_DIR, f"{table_name}.parquet")
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def load_table(table_name: str) -> pd.DataFrame:
     """
-    Carica la tabella Parquet interrogando direttamente il Cloud Object Storage
-    tramite DuckDB + httpfs (`s3://bucket/{table_name}.parquet`) o sincronizzando
-    il file remoto, con fallback trasparente sul file locale in `data/`.
+    Carica la tabella Parquet dal mirror locale (`/tmp_data` o `data/`) tramite DuckDB/Pandas.
+    Restituisce esclusivamente il DataFrame Pandas (nessuna connessione DuckDB passata in cache).
     """
     p = _parquet_path(table_name)
     return cloud_storage.load_parquet_with_cloud_sync(table_name, p)
@@ -167,28 +168,21 @@ def _clean_dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _clear_all_table_caches():
-    load_table.clear()
-    for fn_name in (
-        "_compute_dynamic_roster_metrics",
-        "get_distinct_sessions_catalog",
-        "get_typology_rates_cache",
-        "get_history_team_counts",
-        "get_players_df",
-        "get_oval_matches_df",
-    ):
-        fn_obj = globals().get(fn_name)
-        if fn_obj is not None and hasattr(fn_obj, "clear"):
-            try:
-                fn_obj.clear()
-            except Exception:
-                pass
+    """Invalida tutte le cache dati Streamlit al termine di un salvataggio o importazione."""
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    try:
+        load_table.clear()
+    except Exception:
+        pass
 
 
 def save_table(table_name: str, df: pd.DataFrame):
     """
-    Salva e sovrascrive il file Parquet su un file temporaneo, lo carica direttamente
-    sul bucket Cloud remoto (S3 / Supabase Storage), aggiorna la cache locale e
-    rimuove il file temporaneo.
+    Aggiorna prima il file Parquet locale (`/tmp_data` e `data/`), esegue `upload_file`
+    verso il bucket remoto S3/Supabase come backup e svuota la cache con `st.cache_data.clear()`.
     """
     p = _parquet_path(table_name)
     out = _clean_dataframe_for_parquet(df)
@@ -223,7 +217,7 @@ def save_coach_config(new_cfg: dict):
 # ==============================================================================
 # 1. AREA GESTIONE ROSTER (players & player_aliases) CON CALCOLO AUTOMATICO
 # ==============================================================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def _compute_dynamic_roster_metrics() -> dict:
     """
     Calcola dinamicamente per ogni atleta (inclusi i nuovi inseriti):
@@ -359,6 +353,7 @@ def _compute_dynamic_roster_metrics() -> dict:
     return res
 
 
+@st.cache_data(ttl=3600)
 def get_players_df() -> pd.DataFrame:
     df = load_table("players")
     if df.empty:
@@ -477,6 +472,7 @@ def get_players_df() -> pd.DataFrame:
     return out.sort_values(by=["department", "role", "last_name"], na_position="last").reset_index(drop=True)
 
 
+@st.cache_data(ttl=3600)
 def get_aliases_df() -> pd.DataFrame:
     df = load_table("player_aliases")
     if df.empty:
@@ -716,14 +712,17 @@ def get_player_department(player_name: str = "", role: str = "", jersey_number: 
 # ==============================================================================
 # 2. AREA ATLETI IN RADUNO (camps & camp_players)
 # ==============================================================================
+@st.cache_data(ttl=3600)
 def get_camps_df() -> pd.DataFrame:
     df = load_table("camps")
     if df.empty:
         return pd.DataFrame(columns=["id", "competition", "week_name", "start_date", "forwards_count", "backs_count", "total_count", "notes"])
+    df = df.copy()
     df["start_date_str"] = df["start_date"].astype(str).str[:10]
     return df.sort_values(by=["start_date_str", "id"], ascending=[False, False]).reset_index(drop=True)
 
 
+@st.cache_data(ttl=3600)
 def get_camp_players_df(camp_id: int = None) -> pd.DataFrame:
     cp_df = load_table("camp_players")
     if cp_df.empty:
@@ -909,10 +908,12 @@ def remove_player_from_camp(entry_id: int, camp_id: int):
 # ==============================================================================
 # 3. AREA STORICO PARTITE & 4. FORMAZIONE MATCH (matches & match_lineups)
 # ==============================================================================
+@st.cache_data(ttl=3600)
 def get_matches_df() -> pd.DataFrame:
     df = load_table("matches")
     if df.empty:
         return pd.DataFrame(columns=["id", "date", "match_name", "competition", "full_label"])
+    df = df.copy()
     df["date_str"] = df["date"].astype(str).str[:10]
     return df.sort_values(by=["date_str", "id"], ascending=[False, False]).reset_index(drop=True)
 
@@ -949,6 +950,7 @@ def delete_match(match_id: int):
         save_table("match_lineups", ldf)
 
 
+@st.cache_data(ttl=3600)
 def get_lineup_matches_summary() -> pd.DataFrame:
     ldf = load_table("match_lineups")
     mdf = get_matches_df()
@@ -1018,6 +1020,7 @@ def clone_match_lineup(source_date_str: str, target_date_str: str, target_match_
     return len(entries)
 
 
+@st.cache_data(ttl=3600)
 def get_match_lineup_detail(match_date_str: str) -> dict:
     clean_date = str(match_date_str)[:10]
     ldf = load_table("match_lineups")
@@ -1242,17 +1245,20 @@ def sync_oval_matches_and_lineups(force: bool = False) -> tuple[int, int]:
 # ==============================================================================
 # 5. AREA STORICO DATI GPS (gps_history — Foglio FULL D..AY)
 # ==============================================================================
+@st.cache_data(ttl=3600)
 def get_gps_history_df(team_type: str = None) -> pd.DataFrame:
     df = load_table("gps_history")
     if df.empty:
         cols = ["id", "team_type", "team_name", "source_file", "excel_row"] + [c[0] for c in FIR_COLUMNS_META]
         return pd.DataFrame(columns=cols)
+    df = df.copy()
     df["date_str"] = df["date"].astype(str).replace({"NaT": "", "None": "", "nan": ""}).str[:10]
     if team_type and team_type != "all":
         df = df[df["team_type"] == team_type].copy()
     return df.sort_values(by=["date_str", "id"], ascending=[False, False]).reset_index(drop=True)
 
 
+@st.cache_data(ttl=3600)
 def get_history_team_counts() -> dict:
     df = load_table("gps_history")
     counts = {"nazionale": 0, "benetton": 0, "zebre": 0, "altro": 0, "total": len(df)}
@@ -1440,7 +1446,7 @@ def delete_gps_history_session(date_str: str, session_name: str, team_type: str 
 # ==============================================================================
 # 5b. MOTORE DI CALCOLO TASSI MEDI AL MINUTO PER TIPOLOGIA & SESSIONI VIRTUALI
 # ==============================================================================
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def get_typology_rates_cache() -> dict:
     """
     Calcola e memorizza in cache i tassi medi al minuto (per tutte le metriche GPS)
@@ -1766,7 +1772,7 @@ def generate_virtual_player_gps_row(
     return row
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def get_distinct_sessions_catalog(team_type: str = None) -> list[dict]:
     """Restituisce il catalogo ordinato di tutte le sedute presenti nell'archivio storico GPS."""
     gh = load_table("gps_history")
@@ -1861,10 +1867,12 @@ def save_club_mapping(club_name: str, mapping_dict: dict):
 # ==============================================================================
 # 7. DATABASE OVAL MATCH (oval_matches.parquet)
 # ==============================================================================
+@st.cache_data(ttl=3600)
 def get_oval_matches_df() -> pd.DataFrame:
     df = load_table("oval_matches")
     if df.empty:
         return pd.DataFrame()
+    df = df.copy()
     date_col = "date" if "date" in df.columns else "match_date"
     if date_col in df.columns:
         df["match_date"] = df[date_col].astype(str).replace({"None": "", "nan": "", "NaT": ""}).str[:10]
@@ -2086,6 +2094,7 @@ def delete_oval_match_record(record_id: int):
         save_table("oval_matches", df)
 
 
+@st.cache_data(ttl=3600)
 def get_oval_distinct_matches_df() -> pd.DataFrame:
     """
     Raggruppa i record di oval_matches per partita (match_date, game, teamName)
@@ -2172,6 +2181,7 @@ def delete_oval_match_by_game(match_date: str, game: str, team_name: str = None)
     return removed_cnt
 
 
+@st.cache_data(ttl=3600)
 def get_oval_distinct_dates_df() -> pd.DataFrame:
     """
     Raggruppa i record di oval_matches per data (match_date / date)
@@ -4692,12 +4702,21 @@ GYMAWARE_DB_PATH = os.path.join(DATA_DIR, "rugby_database.sqlite")
 GYMAWARE_SEED_CSV = os.path.join(DATA_DIR, "261109 - Rep Statistics Table.csv")
 
 
+_GYMAWARE_DB_INITIALIZED = False
+
+
 def get_gymaware_conn():
     return sqlite3.connect(GYMAWARE_DB_PATH)
 
 
 def init_gymaware_db():
-    """Inizializza la tabella gymaware_data nel database SQLite, sincronizza dal Cloud Object Storage e popola con i dati di seed se vuota."""
+    """Inizializza la tabella gymaware_data nel database SQLite una sola volta per processo."""
+    global _GYMAWARE_DB_INITIALIZED
+    if _GYMAWARE_DB_INITIALIZED and os.path.exists(GYMAWARE_DB_PATH):
+        return
+
+    cloud_storage.sync_remote_to_local(force=False)
+
     conn = get_gymaware_conn()
     cur = conn.cursor()
     cur.execute(
@@ -4731,16 +4750,7 @@ def init_gymaware_db():
     """
     )
     conn.commit()
-    conn.close()
 
-    # Sincronizza i dati remoti dal Cloud Object Storage (gymaware_data.parquet)
-    try:
-        cloud_storage.pull_gymaware_from_cloud(GYMAWARE_DB_PATH)
-    except Exception:
-        pass
-
-    conn = get_gymaware_conn()
-    cur = conn.cursor()
     # Se la tabella è vuota, carica il file seed se disponibile
     count = cur.execute("SELECT COUNT(*) FROM gymaware_data").fetchone()[0]
     if count == 0 and os.path.exists(GYMAWARE_SEED_CSV):
@@ -4750,6 +4760,7 @@ def init_gymaware_db():
         except Exception as e:
             print(f"Errore auto-seed GymAware: {e}")
     conn.close()
+    _GYMAWARE_DB_INITIALIZED = True
 
 
 def save_gymaware_from_df(df: pd.DataFrame, conn=None, replace_all=False) -> int:
@@ -4868,6 +4879,7 @@ def save_gymaware_from_df(df: pd.DataFrame, conn=None, replace_all=False) -> int
         cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
     except Exception:
         pass
+    _clear_all_table_caches()
     return inserted_count
 
 
@@ -4895,6 +4907,7 @@ def _normalize_gymaware_date_str(d_val) -> str:
     return s
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_df(
     exercise: str = None,
     athlete: str = None,
@@ -4940,6 +4953,7 @@ def get_gymaware_df(
     return df
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_summary_stats(
     date: str = None,
     start_date: str = None,
@@ -5128,6 +5142,7 @@ def get_gymaware_ranking(
     return df
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_exercises() -> list:
     init_gymaware_db()
     conn = get_gymaware_conn()
@@ -5138,6 +5153,7 @@ def get_gymaware_exercises() -> list:
     return [r[0] for r in rows]
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_athletes() -> list:
     init_gymaware_db()
     conn = get_gymaware_conn()
@@ -5148,6 +5164,7 @@ def get_gymaware_athletes() -> list:
     return [r[0] for r in rows]
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_dates() -> list:
     """Ritorna tutte le date uniche ordinate cronologicamente dalla più recente."""
     init_gymaware_db()
@@ -5163,6 +5180,7 @@ def get_gymaware_dates() -> list:
     return [r[0] for r in rows]
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_athletes_for_date(date_str) -> list:
     """Ritorna gli atleti con misurazioni registrate in una specifica data."""
     init_gymaware_db()
@@ -5191,6 +5209,7 @@ def delete_gymaware_date(date_str) -> int:
             cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
         except Exception:
             pass
+        _clear_all_table_caches()
     return count
 
 
@@ -5212,9 +5231,11 @@ def delete_gymaware_athlete_date(athlete_name: str, date_str) -> int:
             cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
         except Exception:
             pass
+        _clear_all_table_caches()
     return count
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_database_overview() -> dict:
     """
     Ritorna le metriche globali del database GymAware:
@@ -5263,6 +5284,7 @@ def get_gymaware_database_overview() -> dict:
     }
 
 
+@st.cache_data(ttl=3600)
 def get_gymaware_recent_sessions_summary(limit: int = 4) -> list:
     """
     Ritorna le ultime sessioni di allenamento GymAware presenti nel database,
@@ -5400,6 +5422,7 @@ def update_gymaware_rows(df_edited: pd.DataFrame) -> int:
             cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
         except Exception:
             pass
+        _clear_all_table_caches()
     return updated_count
 
 
@@ -5415,6 +5438,7 @@ def delete_gymaware_all() -> int:
         cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
     except Exception:
         pass
+    _clear_all_table_caches()
     return count
 
 

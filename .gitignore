@@ -25,4 +25,6 @@ __pycache__/
 
 # Temporary / Scratch files
 scratch/
+tmp_data/
+rugby_fir_app/tmp_data/
 mov3_analytics_repo/

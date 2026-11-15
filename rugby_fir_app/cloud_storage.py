@@ -1,19 +1,30 @@
 # Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 """
-Modulo di Cloud Object Storage Permanente (AWS S3 / Supabase Storage) + DuckDB httpfs
-per la piattaforma FIR GPS Analytics.
+Modulo di Cloud Object Storage (AWS S3 / Supabase Storage) con Architettura "Local Mirroring"
+e query DuckDB locali ad altissima velocità per la piattaforma FIR GPS Analytics.
 
-Disaccoppia il codice applicativo dai dati (Parquet, SQLite GymAware e JSON di configurazione),
-prevenendo qualsiasi perdita di dati (Data Loss) ad ogni nuovo deploy (git push) su Streamlit Cloud.
+Architettura:
+1. LOCAL MIRRORING ALL'AVVIO (`sync_remote_to_local()`):
+   - All'avvio dell'applicazione (o dopo un deploy/riavvio del container), verifica se i file
+     `.parquet`, `.sqlite` e `.json` sono già presenti nella cartella locale `/tmp_data`
+     (sincronizzata con `data/`).
+   - Se mancano (es. post-deploy), li scarica UNA SOLA VOLTA dal bucket remoto (S3 / Supabase).
+2. ZERO LATENZA DI RETE IN LETTURA:
+   - Tutte le letture e le query analitiche di DuckDB / Pandas puntano ESCLUSIVAMENTE ai file
+     Parquet/SQLite/JSON locali scaricati su disco. Nessuna chiamata di rete viene eseguita
+     durante la navigazione tra le pagine o i cambi di filtro.
+3. WRITE-THROUGH IN INGESTION:
+   - Quando l'Admin importa un nuovo CSV o modifica un dato (GPS, GymAware, Roster, Raduni, 23),
+     il sistema aggiorna immediatamente il file locale su disco, esegue `upload_file` (upsert)
+     verso il bucket remoto S3/Supabase come backup permanente e invoca `st.cache_data.clear()`.
 """
 
 import os
-import io
 import json
 import shutil
 import sqlite3
 import tempfile
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 import pandas as pd
 
 try:
@@ -24,7 +35,6 @@ except ImportError:
 try:
     import boto3
     from botocore.config import Config as BotoConfig
-    from botocore.exceptions import ClientError
     HAS_BOTO3 = True
 except ImportError:
     HAS_BOTO3 = False
@@ -44,15 +54,43 @@ except ImportError:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+TMP_DATA_DIR = os.path.join(BASE_DIR, "tmp_data")
+SYNC_MARKER_FILE = os.path.join(TMP_DATA_DIR, ".cloud_sync_initialized")
+
 DEFAULT_BUCKET_NAME = "fir-gps-storage"
 
-# Valori segnaposto da ignorare se non ancora compilati dall'utente
+# Elenco completo dei file dati gestiti dal Local Mirroring
+MANAGED_PARQUET_TABLES: List[str] = [
+    "gps_history",
+    "players",
+    "player_aliases",
+    "camps",
+    "camp_players",
+    "matches",
+    "match_lineups",
+    "oval_matches",
+    "club_mappings",
+    "gps_records",
+]
+
+MANAGED_JSON_FILES: List[str] = [
+    "fir_session_types.json",
+    "session_player_status.json",
+    "session_timelines.json",
+    "app_config.json",
+    "player_photos.json",
+    "users.json",
+]
+
 _PLACEHOLDER_VALUES = {
     "",
     "your-aws-access-key-id",
     "your-aws-secret-access-key",
     "inserisci-access-key-id",
     "inserisci-secret-access-key",
+    "inserisci_aws_access_key_id",
+    "inserisci_aws_secret_access_key",
+    "inserisci_supabase_service_role_key",
     "mio-bucket",
     "your-supabase-url",
     "your-supabase-service-role-key",
@@ -73,7 +111,7 @@ def _is_valid_secret(val: Optional[str]) -> bool:
 
 
 def _read_local_toml_fallback() -> Dict[str, Any]:
-    """Legge manualmente .streamlit/secrets.toml se eseguito fuori dal contesto runtime Streamlit."""
+    """Legge manualmente .streamlit/secrets.toml se eseguito fuori dal runtime Streamlit."""
     candidates = [
         os.path.join(BASE_DIR, ".streamlit", "secrets.toml"),
         os.path.join(os.path.dirname(BASE_DIR), ".streamlit", "secrets.toml"),
@@ -86,7 +124,6 @@ def _read_local_toml_fallback() -> Dict[str, Any]:
                     with open(path, "rb") as f:
                         return tomllib.load(f)
                 except ImportError:
-                    # Parser minimale key = "value" per compatibilità Python < 3.11
                     out = {}
                     with open(path, "r", encoding="utf-8") as f:
                         for line in f:
@@ -102,24 +139,20 @@ def _read_local_toml_fallback() -> Dict[str, Any]:
     return {}
 
 
+_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+
+
 def get_cloud_config() -> Dict[str, Any]:
-    """
-    Recupera le credenziali Cloud Object Storage da:
-    1. Variabili d'ambiente (os.environ)
-    2. st.secrets (Streamlit Cloud Secrets / .streamlit/secrets.toml)
-    3. Fallback lettura diretta .streamlit/secrets.toml
+    """Recupera e memorizza in memoria la configurazione Cloud Object Storage (S3 o Supabase)."""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is not None:
+        return _CONFIG_CACHE
 
-    Supporta sia AWS S3 (o storage S3-compatibile come Supabase S3 / Cloudflare R2)
-    sia Supabase Storage REST API.
-    """
     secrets_dict: Dict[str, Any] = {}
-
-    # 1. Carica da file locale di fallback
     local_toml = _read_local_toml_fallback()
     if isinstance(local_toml, dict):
         secrets_dict.update(local_toml)
 
-    # 2. Carica da st.secrets se disponibile
     if st is not None:
         try:
             for k in st.secrets:
@@ -152,7 +185,7 @@ def get_cloud_config() -> Dict[str, Any]:
     supabase_key = _get_key(
         "SUPABASE_SERVICE_KEY",
         "SUPABASE_SERVICE_ROLE_KEY",
-        " supabase_service_key",
+        "supabase_service_key",
         "SUPABASE_KEY",
         "supabase_key",
     )
@@ -168,7 +201,7 @@ def get_cloud_config() -> Dict[str, Any]:
     elif has_supabase:
         provider = "supabase"
 
-    return {
+    _CONFIG_CACHE = {
         "enabled": provider != "none",
         "provider": provider,
         "has_s3": has_s3,
@@ -181,6 +214,7 @@ def get_cloud_config() -> Dict[str, Any]:
         "supabase_url": supabase_url,
         "supabase_key": supabase_key,
     }
+    return _CONFIG_CACHE
 
 
 # ==============================================================================
@@ -192,7 +226,6 @@ _BUCKET_VERIFIED = set()
 
 
 def get_s3_client():
-    """Restituisce il client boto3 S3 configurato."""
     global _S3_CLIENT_CACHE
     if _S3_CLIENT_CACHE is not None:
         return _S3_CLIENT_CACHE
@@ -208,9 +241,9 @@ def get_s3_client():
         "region_name": cfg["aws_region"],
         "config": BotoConfig(
             signature_version="s3v4",
-            connect_timeout=10,
-            read_timeout=30,
-            retries={"max_attempts": 3, "mode": "standard"},
+            connect_timeout=8,
+            read_timeout=25,
+            retries={"max_attempts": 2, "mode": "standard"},
         ),
     }
     if cfg["aws_endpoint_url"]:
@@ -221,7 +254,6 @@ def get_s3_client():
 
 
 def get_supabase_client():
-    """Restituisce il client Supabase Storage configurato."""
     global _SUPABASE_CLIENT_CACHE
     if _SUPABASE_CLIENT_CACHE is not None:
         return _SUPABASE_CLIENT_CACHE
@@ -238,7 +270,6 @@ def get_supabase_client():
 
 
 def _ensure_bucket_exists(cfg: Dict[str, Any]) -> bool:
-    """Verifica che il bucket remoto esista (e lo crea se possibile su Supabase/S3)."""
     bucket = cfg["bucket_name"]
     cache_key = f"{cfg['provider']}:{bucket}"
     if cache_key in _BUCKET_VERIFIED:
@@ -250,8 +281,6 @@ def _ensure_bucket_exists(cfg: Dict[str, Any]) -> bool:
             return False
         try:
             s3.head_bucket(Bucket=bucket)
-            _BUCKET_VERIFIED.add(cache_key)
-            return True
         except Exception:
             try:
                 if cfg["aws_region"] and cfg["aws_region"] != "us-east-1":
@@ -261,13 +290,10 @@ def _ensure_bucket_exists(cfg: Dict[str, Any]) -> bool:
                     )
                 else:
                     s3.create_bucket(Bucket=bucket)
-                _BUCKET_VERIFIED.add(cache_key)
-                return True
             except Exception:
-                # Anche se head_bucket/create_bucket non sono permessi dalla policy IAM,
-                # l'utente potrebbe avere permessi s3:GetObject e s3:PutObject sul bucket.
-                _BUCKET_VERIFIED.add(cache_key)
-                return True
+                pass
+        _BUCKET_VERIFIED.add(cache_key)
+        return True
 
     elif cfg["provider"] == "supabase":
         sb = get_supabase_client()
@@ -275,26 +301,22 @@ def _ensure_bucket_exists(cfg: Dict[str, Any]) -> bool:
             return False
         try:
             buckets = sb.storage.list_buckets()
-            existing_names = [ getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None) for b in (buckets or []) ]
+            existing_names = [
+                getattr(b, "name", None) or (b.get("name") if isinstance(b, dict) else None)
+                for b in (buckets or [])
+            ]
             if bucket not in existing_names:
                 sb.storage.create_bucket(bucket, options={"public": False})
-            _BUCKET_VERIFIED.add(cache_key)
-            return True
         except Exception:
-            _BUCKET_VERIFIED.add(cache_key)
-            return True
+            pass
+        _BUCKET_VERIFIED.add(cache_key)
+        return True
 
     return False
 
 
-# ==============================================================================
-# OPERAZIONI DI BASSO LIVELLO SU CLOUD OBJECT STORAGE (DOWNLOAD / UPLOAD FILE)
-# ==============================================================================
 def download_cloud_object_to_file(remote_key: str, dest_local_path: str) -> bool:
-    """
-    Scarica un file dal bucket remoto (S3 o Supabase Storage) nel percorso locale specificato.
-    Ritorna True se il download è riuscito, False se il file non esiste o in caso di errore.
-    """
+    """Scarica un singolo file dal bucket remoto nel percorso locale specificato."""
     cfg = get_cloud_config()
     if not cfg["enabled"]:
         return False
@@ -307,6 +329,7 @@ def download_cloud_object_to_file(remote_key: str, dest_local_path: str) -> bool
         if not s3:
             return False
         try:
+            os.makedirs(os.path.dirname(os.path.abspath(dest_local_path)), exist_ok=True)
             s3.download_file(bucket, remote_key, dest_local_path)
             return os.path.exists(dest_local_path) and os.path.getsize(dest_local_path) > 0
         except Exception:
@@ -330,9 +353,7 @@ def download_cloud_object_to_file(remote_key: str, dest_local_path: str) -> bool
 
 
 def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_type: str = "application/octet-stream") -> bool:
-    """
-    Carica (o sovrascrive in modalità atomica/upsert) un file locale sul bucket remoto (S3 o Supabase Storage).
-    """
+    """Carica (sovrascrive in upsert) un file locale verso il bucket remoto S3/Supabase."""
     if not os.path.exists(local_src_path):
         return False
 
@@ -378,210 +399,192 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
 
 
 # ==============================================================================
-# 2. CONNESSIONE DUCKDB CON ESTENSIONE HTTPFS (QUERY DIRETTE SU PARQUET REMOTI)
+# TASK 1: LOCAL MIRRORING ALL'AVVIO (`sync_remote_to_local()`)
 # ==============================================================================
-def get_duckdb_cloud_connection():
+_PROCESS_SYNC_DONE = False
+
+
+def get_local_mirror_path(filename: str) -> str:
     """
-    Crea e restituisce una connessione DuckDB configurata con l'estensione `httpfs`
-    per interrogare direttamente i file `.parquet` ospitati su Cloud Object Storage
-    tramite protocollo `s3://` o `https://`.
+    Restituisce il percorso locale in `tmp_data/{filename}`.
+    Se non esiste ancora in `tmp_data` ma esiste in `data/`, lo copia in `tmp_data`.
     """
-    if not HAS_DUCKDB:
-        return None
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    tmp_p = os.path.join(TMP_DATA_DIR, filename)
+    data_p = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(tmp_p) and os.path.exists(data_p):
+        try:
+            shutil.copy2(data_p, tmp_p)
+        except Exception:
+            return data_p
+    return tmp_p
+
+
+def sync_remote_to_local(force: bool = False) -> Dict[str, Any]:
+    """
+    Inizializza il Local Mirroring all'avvio dell'applicazione:
+    - Verifica se i file `.parquet`, `.sqlite` e `.json` esistono nella cartella locale `/tmp_data`
+      (e se il marker `.cloud_sync_initialized` è già presente).
+    - Se mancano (es. subito dopo un deploy o riavvio del container su Streamlit Cloud) o se `force=True`,
+      scarica i file dal bucket remoto in `/tmp_data` e allinea anche `data/`.
+    - Durante tutta la successiva esecuzione dell'app, questa funzione ritorna istantaneamente
+      in 0 ms senza effettuare alcuna chiamata di rete.
+    """
+    global _PROCESS_SYNC_DONE
+    if _PROCESS_SYNC_DONE and not force and os.path.exists(SYNC_MARKER_FILE):
+        return {"status": "cached_local", "downloaded": []}
+
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    # Se il marker esiste sul disco locale e non è richiesto force, controlla solo che i parquet base ci siano
+    if not force and os.path.exists(SYNC_MARKER_FILE):
+        gps_tmp = os.path.join(TMP_DATA_DIR, "gps_history.parquet")
+        if os.path.exists(gps_tmp) and os.path.getsize(gps_tmp) > 0:
+            _PROCESS_SYNC_DONE = True
+            return {"status": "already_synced_on_disk", "downloaded": []}
 
     cfg = get_cloud_config()
-    con = duckdb.connect(database=":memory:")
+    downloaded = []
+
+    all_files = [f"{t}.parquet" for t in MANAGED_PARQUET_TABLES] + MANAGED_JSON_FILES + [
+        "rugby_database.sqlite",
+        "gymaware_data.parquet",
+    ]
+
+    for fname in all_files:
+        tmp_dest = os.path.join(TMP_DATA_DIR, fname)
+        data_dest = os.path.join(DATA_DIR, fname)
+
+        # Se non forzato e il file è già stato scaricato in TMP_DATA_DIR, salta il download
+        if not force and os.path.exists(tmp_dest) and os.path.getsize(tmp_dest) > 0:
+            continue
+
+        pulled = False
+        if cfg["enabled"]:
+            pulled = download_cloud_object_to_file(fname, tmp_dest)
+            if pulled:
+                downloaded.append(fname)
+                # Allinea anche la cartella data/ locale
+                try:
+                    shutil.copy2(tmp_dest, data_dest)
+                except Exception:
+                    pass
+
+        # Se non era presente sul Cloud (o Cloud disabilitato), usa la copia di baseline in data/
+        if not pulled and os.path.exists(data_dest):
+            try:
+                shutil.copy2(data_dest, tmp_dest)
+            except Exception:
+                pass
+            if cfg["enabled"]:
+                ctype = "application/json" if fname.endswith(".json") else "application/octet-stream"
+                upload_file_to_cloud_object(data_dest, fname, content_type=ctype)
+
+    # Allinea la tabella SQLite GymAware dal parquet scaricato se più aggiornato
+    try:
+        tmp_gym_pq = os.path.join(TMP_DATA_DIR, "gymaware_data.parquet")
+        tmp_sqlite = os.path.join(TMP_DATA_DIR, "rugby_database.sqlite")
+        data_sqlite = os.path.join(DATA_DIR, "rugby_database.sqlite")
+        if os.path.exists(tmp_gym_pq):
+            df_gym = pd.read_parquet(tmp_gym_pq)
+            if not df_gym.empty:
+                for sq_path in (tmp_sqlite, data_sqlite):
+                    conn = sqlite3.connect(sq_path)
+                    try:
+                        df_gym.to_sql("gymaware_data", conn, if_exists="replace", index=False)
+                        conn.commit()
+                    finally:
+                        conn.close()
+    except Exception:
+        pass
 
     try:
-        con.execute("INSTALL httpfs;")
-        con.execute("LOAD httpfs;")
+        with open(SYNC_MARKER_FILE, "w", encoding="utf-8") as f:
+            f.write("synced")
     except Exception:
-        # In ambienti in cui httpfs è già pre-installato o bloccato in scrittura, tenta solo LOAD
-        try:
-            con.execute("LOAD httpfs;")
-        except Exception:
-            pass
+        pass
 
-    if cfg["has_s3"]:
-        region = cfg["aws_region"] or "eu-central-1"
-        ak = cfg["aws_access_key_id"].replace("'", "''")
-        sk = cfg["aws_secret_access_key"].replace("'", "''")
-        con.execute(f"SET s3_region='{region}';")
-        con.execute(f"SET s3_access_key_id='{ak}';")
-        con.execute(f"SET s3_secret_access_key='{sk}';")
-
-        if cfg["aws_endpoint_url"]:
-            # Gestione endpoint S3 custom (es. Supabase S3 Storage, Cloudflare R2, MinIO)
-            ep = cfg["aws_endpoint_url"].replace("https://", "").replace("http://", "").rstrip("/")
-            con.execute(f"SET s3_endpoint='{ep}';")
-            con.execute("SET s3_url_style='path';")
-            con.execute("SET s3_use_ssl=true;")
-
-    return con
-
-
-def query_remote_parquet_duckdb(table_name: str, sql_where: Optional[str] = None) -> Optional[pd.DataFrame]:
-    """
-    Interroga direttamente il file Parquet remoto tramite DuckDB + `httpfs`:
-        `SELECT * FROM read_parquet('s3://<BUCKET_NAME>/<table_name>.parquet')`
-    Se il provider è Supabase REST (senza chiavi S3), genera un URL firmato HTTPS
-    e lo interroga tramite DuckDB `read_parquet('https://...')`.
-    """
-    if not HAS_DUCKDB:
-        return None
-
-    cfg = get_cloud_config()
-    if not cfg["enabled"]:
-        return None
-
-    remote_key = f"{table_name}.parquet"
-    bucket = cfg["bucket_name"]
-    where_clause = f" WHERE {sql_where}" if sql_where else ""
-
-    con = get_duckdb_cloud_connection()
-    if con is None:
-        return None
-
-    try:
-        if cfg["has_s3"]:
-            s3_uri = f"s3://{bucket}/{remote_key}"
-            query = f"SELECT * FROM read_parquet('{s3_uri}'){where_clause}"
-            df = con.execute(query).df()
-            return df
-
-        elif cfg["has_supabase"]:
-            sb = get_supabase_client()
-            if sb is not None:
-                signed = sb.storage.from_(bucket).create_signed_url(remote_key, 60)
-                signed_url = None
-                if isinstance(signed, dict):
-                    signed_url = signed.get("signedURL") or signed.get("signedUrl")
-                if signed_url:
-                    query = f"SELECT * FROM read_parquet('{signed_url}'){where_clause}"
-                    df = con.execute(query).df()
-                    return df
-    except Exception:
-        return None
-    finally:
-        try:
-            con.close()
-        except Exception:
-            pass
-
-    return None
+    _PROCESS_SYNC_DONE = True
+    return {"status": "synced_from_cloud", "downloaded": downloaded}
 
 
 # ==============================================================================
-# 3. MODULO DI FETCHING & INGESTION PARQUET (CON FILE TEMPORANEO ATOMICO)
+# LETTURA LOCALE VELOCE TRAMITE DUCKDB / PANDAS (ZERO LATENZA DI RETE)
 # ==============================================================================
-# Cache di sessione per evitare download ripetuti ad ogni rerun della stessa pagina
-_CLOUD_PARQUET_SYNC_TS: Dict[str, float] = {}
+def query_local_parquet_duckdb(local_parquet_path: str, sql_where: Optional[str] = None) -> pd.DataFrame:
+    """
+    Esegue una query analitica DuckDB direttamente sul file Parquet LOCALE scaricato.
+    Non apre mai connessioni di rete `s3://` o `httpfs` durante la lettura.
+    """
+    if not os.path.exists(local_parquet_path):
+        return pd.DataFrame()
+
+    if HAS_DUCKDB and sql_where:
+        con = duckdb.connect(database=":memory:")
+        try:
+            safe_path = local_parquet_path.replace("'", "''")
+            q = f"SELECT * FROM read_parquet('{safe_path}') WHERE {sql_where}"
+            return con.execute(q).df()
+        except Exception:
+            pass
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    try:
+        return pd.read_parquet(local_parquet_path)
+    except Exception:
+        return pd.DataFrame()
 
 
 def load_parquet_with_cloud_sync(table_name: str, local_fallback_path: str) -> pd.DataFrame:
     """
-    Legge una tabella `.parquet` garantendo la persistenza Cloud:
-    1. Se il Cloud Storage è attivo:
-       - Tenta la lettura diretta dal Cloud tramite DuckDB `httpfs` (`s3://bucket/{table_name}.parquet`)
-         oppure scaricando il `.parquet` remoto in un file temporaneo.
-       - Se il file esiste sul Cloud, aggiorna la cache locale e restituisce il DataFrame.
-       - Se il file NON esiste ancora sul Cloud ma esiste in locale (`data/{table_name}.parquet`),
-         esegue il bootstrap automatico caricando il file locale sul bucket remoto.
-    2. Se il Cloud Storage non è ancora configurato, legge dal file locale `local_fallback_path`.
+    Carica la tabella `.parquet` dal mirror locale (`/tmp_data` o `data/`) a latenza zero.
+    Se l'app è appena stata avviata e `/tmp_data` non è ancora inizializzata, esegue
+    una sola volta `sync_remote_to_local()`.
     """
-    cfg = get_cloud_config()
-    remote_key = f"{table_name}.parquet"
+    if not _PROCESS_SYNC_DONE:
+        sync_remote_to_local(force=False)
 
-    if cfg["enabled"]:
-        # 1a. Tentativo query diretta DuckDB httpfs (es. SELECT * FROM read_parquet('s3://...'))
-        df_remote = query_remote_parquet_duckdb(table_name)
-        if df_remote is not None:
-            # Sincronizza anche la copia di cache locale per performance e resilienza
-            try:
-                os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
-                df_remote.to_parquet(local_fallback_path, index=False)
-            except Exception:
-                pass
-            return df_remote
+    fname = f"{table_name}.parquet"
+    mirror_path = get_local_mirror_path(fname)
+    if os.path.exists(mirror_path):
+        df = query_local_parquet_duckdb(mirror_path)
+        if not df.empty:
+            return df
 
-        # 1b. Fallback download tramite client boto3 / Supabase su file temporaneo
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f"_{table_name}.parquet")
-        os.close(tmp_fd)
-        try:
-            downloaded = download_cloud_object_to_file(remote_key, tmp_path)
-            if downloaded:
-                df_dl = pd.read_parquet(tmp_path)
-                try:
-                    os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
-                    shutil.copy2(tmp_path, local_fallback_path)
-                except Exception:
-                    pass
-                return df_dl
-            else:
-                # Il file non è ancora presente sul bucket remoto:
-                # se abbiamo una baseline locale, effettuiamo il seed automatico sul Cloud
-                if os.path.exists(local_fallback_path):
-                    upload_file_to_cloud_object(local_fallback_path, remote_key, content_type="application/octet-stream")
-        except Exception:
-            pass
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-
-    # Fallback locale
     if os.path.exists(local_fallback_path):
-        try:
-            return pd.read_parquet(local_fallback_path)
-        except Exception:
-            return pd.DataFrame()
+        return query_local_parquet_duckdb(local_fallback_path)
+
     return pd.DataFrame()
 
 
 def save_parquet_with_cloud_sync(table_name: str, df: pd.DataFrame, local_fallback_path: str) -> bool:
     """
-    Salva e sovrascrive un DataFrame su file `.parquet` applicando il flusso Cloud:
-    a) Scrive il Parquet aggiornato in un file temporaneo locale (`tempfile`).
-    b) Effettua l'upload (sovrascrittura) del Parquet aggiornato direttamente sul bucket remoto.
-    c) Aggiorna la copia di cache locale (`local_fallback_path`).
-    d) Elimina il file temporaneo locale (`os.unlink`).
+    Logica Write-Through per Data Ingestion / Modifica Tabelle:
+    1. Aggiorna prima il file Parquet LOCALE (in `/tmp_data` e in `data/`).
+    2. Esegue `upload_file` (sovrascrittura) verso il bucket remoto S3/Supabase come backup.
     """
-    remote_key = f"{table_name}.parquet"
-    cfg = get_cloud_config()
+    fname = f"{table_name}.parquet"
+    mirror_path = os.path.join(TMP_DATA_DIR, fname)
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=f"_{table_name}_upload.parquet")
-    os.close(tmp_fd)
-
-    uploaded_ok = False
+    # 1. Aggiorna immediatamente i file Parquet locali
+    df.to_parquet(mirror_path, index=False)
     try:
-        # Scrive prima sul file temporaneo tramite DuckDB o Pandas/PyArrow
-        df.to_parquet(tmp_path, index=False)
+        shutil.copy2(mirror_path, local_fallback_path)
+    except Exception:
+        df.to_parquet(local_fallback_path, index=False)
 
-        # Aggiorna copia locale di cache
-        try:
-            os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
-            shutil.copy2(tmp_path, local_fallback_path)
-        except Exception:
-            df.to_parquet(local_fallback_path, index=False)
-
-        # Upload diretto al bucket remoto (S3 / Supabase Storage)
-        if cfg["enabled"]:
-            uploaded_ok = upload_file_to_cloud_object(
-                tmp_path,
-                remote_key,
-                content_type="application/octet-stream",
-            )
-    finally:
-        # d) Elimina sempre il file temporaneo locale
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
-
-    return uploaded_ok
+    # 2. Backup sul bucket remoto S3/Supabase
+    cfg = get_cloud_config()
+    if cfg["enabled"]:
+        return upload_file_to_cloud_object(mirror_path, fname, content_type="application/octet-stream")
+    return True
 
 
 def ingest_and_append_remote_parquet(
@@ -591,160 +594,73 @@ def ingest_and_append_remote_parquet(
     merge_fn: Optional[Callable[[pd.DataFrame, pd.DataFrame], Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Flusso transazionale di Data Ingestion (Task 3):
-    Quando l'Admin carica nuovi CSV/XLSX tramite il pannello di controllo:
-      a) Scarica temporaneamente il Parquet remoto (`s3://bucket/{table_name}.parquet`).
-      b) Appende/unisce i nuovi dati tramite Pandas/DuckDB (applicando deduplicazione se prevista).
-      c) Effettua l'upload (sovrascrittura) del Parquet aggiornato direttamente sul bucket remoto.
-      d) Elimina i file temporanei locali.
+    Pipeline di Data Ingestion veloce (Local-First + Cloud Backup):
+    1. Legge il file Parquet locale già sincronizzato in `/tmp_data`.
+    2. Appende e deduplica i nuovi dati tramite `merge_fn`.
+    3. Aggiorna prima il file Parquet locale (`/tmp_data` e `data/`).
+    4. Esegue `upload_file` (sovrascrittura) verso il bucket remoto S3/Supabase.
     """
-    cfg = get_cloud_config()
-    remote_key = f"{table_name}.parquet"
+    if not _PROCESS_SYNC_DONE:
+        sync_remote_to_local(force=False)
 
-    tmp_down_fd, tmp_down_path = tempfile.mkstemp(suffix=f"_{table_name}_remote_in.parquet")
-    os.close(tmp_down_fd)
-    tmp_up_fd, tmp_up_path = tempfile.mkstemp(suffix=f"_{table_name}_remote_out.parquet")
-    os.close(tmp_up_fd)
+    fname = f"{table_name}.parquet"
+    mirror_path = get_local_mirror_path(fname)
 
-    try:
-        # a) Scarica temporaneamente il Parquet remoto (o usa la baseline locale se primo avvio)
-        existing_df = pd.DataFrame()
-        if cfg["enabled"] and download_cloud_object_to_file(remote_key, tmp_down_path):
-            try:
-                if HAS_DUCKDB:
-                    con = duckdb.connect(database=":memory:")
-                    existing_df = con.execute(f"SELECT * FROM read_parquet('{tmp_down_path}')").df()
-                    con.close()
-                else:
-                    existing_df = pd.read_parquet(tmp_down_path)
-            except Exception:
-                existing_df = pd.read_parquet(tmp_down_path)
-        elif os.path.exists(local_fallback_path):
-            try:
-                existing_df = pd.read_parquet(local_fallback_path)
-            except Exception:
-                existing_df = pd.DataFrame()
-
-        # b) Appende i nuovi dati tramite funzione di merge/dedup o concatenazione DuckDB/Pandas
-        if merge_fn is not None:
-            result = merge_fn(existing_df, new_rows_df)
-            combined_df = result.get("combined_df", existing_df)
-        else:
-            combined_df = pd.concat([existing_df, new_rows_df], ignore_index=True)
-            result = {
-                "combined_df": combined_df,
-                "inserted": len(new_rows_df),
-                "duplicates": 0,
-                "duplicate_df": pd.DataFrame(),
-                "total": len(new_rows_df),
-            }
-
-        # c) Salva sul file temporaneo di output e sovrascrive il Parquet sul bucket remoto
-        combined_df.to_parquet(tmp_up_path, index=False)
-
-        # Aggiorna copia locale di lavoro
+    existing_df = pd.DataFrame()
+    if os.path.exists(mirror_path):
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
-            shutil.copy2(tmp_up_path, local_fallback_path)
+            existing_df = pd.read_parquet(mirror_path)
         except Exception:
-            combined_df.to_parquet(local_fallback_path, index=False)
+            existing_df = pd.DataFrame()
+    elif os.path.exists(local_fallback_path):
+        try:
+            existing_df = pd.read_parquet(local_fallback_path)
+        except Exception:
+            existing_df = pd.DataFrame()
 
-        if cfg["enabled"]:
-            upload_file_to_cloud_object(tmp_up_path, remote_key, content_type="application/octet-stream")
+    if merge_fn is not None:
+        result = merge_fn(existing_df, new_rows_df)
+        combined_df = result.get("combined_df", existing_df)
+    else:
+        combined_df = pd.concat([existing_df, new_rows_df], ignore_index=True)
+        result = {
+            "combined_df": combined_df,
+            "inserted": len(new_rows_df),
+            "duplicates": 0,
+            "duplicate_df": pd.DataFrame(),
+            "total": len(new_rows_df),
+        }
 
-        return result
-
-    finally:
-        # d) Elimina i file temporanei locali
-        for p in (tmp_down_path, tmp_up_path):
-            if os.path.exists(p):
-                try:
-                    os.unlink(p)
-                except Exception:
-                    pass
+    # Salva prima in locale e poi effettua upload_file sul bucket remoto
+    save_parquet_with_cloud_sync(table_name, combined_df, local_fallback_path)
+    return result
 
 
 # ==============================================================================
-# SINCRONIZZAZIONE DATABASE GYMAWARE (SQLITE + PARQUET REMOTO)
+# GESTIONE LOCALE + BACKUP REMOTO PER GYMAWARE (SQLITE) E FILE JSON
 # ==============================================================================
-_GYMAWARE_PULL_DONE = False
-
-
 def pull_gymaware_from_cloud(sqlite_path: str, force: bool = False) -> bool:
     """
-    Scarica temporaneamente il database GymAware (`gymaware_data.parquet` o `rugby_database.sqlite`)
-    dal bucket remoto e riallinea il database SQLite locale in modo che nessuna sessione VBT
-    venga mai persa dopo un git push / redeploy.
+    In modalità Local Mirroring, i dati GymAware sono già sincronizzati all'avvio
+    da `sync_remote_to_local()`. Se `force=True`, riscarica da Cloud.
     """
-    global _GYMAWARE_PULL_DONE
-    if _GYMAWARE_PULL_DONE and not force:
-        return True
-
-    cfg = get_cloud_config()
-    if not cfg["enabled"]:
-        return False
-
-    tmp_fd, tmp_parquet = tempfile.mkstemp(suffix="_gymaware_remote.parquet")
-    os.close(tmp_fd)
-
-    try:
-        if download_cloud_object_to_file("gymaware_data.parquet", tmp_parquet):
-            remote_df = pd.read_parquet(tmp_parquet)
-            if not remote_df.empty:
-                os.makedirs(os.path.dirname(os.path.abspath(sqlite_path)), exist_ok=True)
-                conn = sqlite3.connect(sqlite_path)
-                try:
-                    # Legge eventuali dati già presenti localmente per fare unione senza perdite
-                    try:
-                        local_df = pd.read_sql_query("SELECT * FROM gymaware_data", conn)
-                    except Exception:
-                        local_df = pd.DataFrame()
-
-                    if not local_df.empty and len(local_df) > len(remote_df):
-                        # Unisce preservando tutti i record unici
-                        dedup_cols = [c for c in ["athlete_name", "date", "exercise", "set_id", "row_type", "rep_number", "mean_velocity"] if c in remote_df.columns and c in local_df.columns]
-                        merged = pd.concat([remote_df, local_df], ignore_index=True)
-                        if dedup_cols:
-                            merged = merged.drop_duplicates(subset=dedup_cols, keep="first").reset_index(drop=True)
-                        merged["id"] = range(1, len(merged) + 1)
-                        merged.to_sql("gymaware_data", conn, if_exists="replace", index=False)
-                    else:
-                        remote_df.to_sql("gymaware_data", conn, if_exists="replace", index=False)
-                    conn.commit()
-                finally:
-                    conn.close()
-                _GYMAWARE_PULL_DONE = True
-                return True
-        else:
-            # Se sul Cloud non esiste ancora gymaware_data.parquet ma esiste il DB locale, esegue il seed
-            if os.path.exists(sqlite_path):
-                push_gymaware_to_cloud(sqlite_path)
-                _GYMAWARE_PULL_DONE = True
-                return True
-    except Exception:
-        pass
-    finally:
-        if os.path.exists(tmp_parquet):
-            try:
-                os.unlink(tmp_parquet)
-            except Exception:
-                pass
-
-    return False
+    if not _PROCESS_SYNC_DONE or force:
+        sync_remote_to_local(force=force)
+    return True
 
 
 def push_gymaware_to_cloud(sqlite_path: str) -> bool:
     """
-    Esporta la tabella `gymaware_data` dal database SQLite in un file temporaneo `.parquet`,
-    lo carica sul bucket remoto (`gymaware_data.parquet` + `rugby_database.sqlite`)
-    ed elimina il file temporaneo locale.
+    Quando viene caricato o modificato un dato GymAware:
+    1. Aggiorna il file Parquet/SQLite locale in `/tmp_data` e `data/`.
+    2. Esegue l'upload verso il bucket remoto S3/Supabase.
     """
-    cfg = get_cloud_config()
-    if not cfg["enabled"] or not os.path.exists(sqlite_path):
+    if not os.path.exists(sqlite_path):
         return False
 
-    tmp_fd, tmp_parquet = tempfile.mkstemp(suffix="_gymaware_upload.parquet")
-    os.close(tmp_fd)
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    tmp_gym_pq = os.path.join(TMP_DATA_DIR, "gymaware_data.parquet")
+    tmp_sqlite = os.path.join(TMP_DATA_DIR, "rugby_database.sqlite")
 
     try:
         conn = sqlite3.connect(sqlite_path)
@@ -753,100 +669,67 @@ def push_gymaware_to_cloud(sqlite_path: str) -> bool:
         finally:
             conn.close()
 
-        df_gym.to_parquet(tmp_parquet, index=False)
-        ok_pq = upload_file_to_cloud_object(tmp_parquet, "gymaware_data.parquet", content_type="application/octet-stream")
-        # Carica anche lo snapshot SQLite completo
-        upload_file_to_cloud_object(sqlite_path, "rugby_database.sqlite", content_type="application/octet-stream")
-        return ok_pq
-    except Exception:
-        return False
-    finally:
-        if os.path.exists(tmp_parquet):
+        df_gym.to_parquet(tmp_gym_pq, index=False)
+        if os.path.abspath(sqlite_path) != os.path.abspath(tmp_sqlite):
             try:
-                os.unlink(tmp_parquet)
+                shutil.copy2(sqlite_path, tmp_sqlite)
             except Exception:
                 pass
 
-
-# ==============================================================================
-# SINCRONIZZAZIONE FILE JSON DI CONFIGURAZIONE (TIPOLOGIE SEDUTE, TIMELINE, STATI)
-# ==============================================================================
-_JSON_SYNCED_KEYS = set()
+        cfg = get_cloud_config()
+        if cfg["enabled"]:
+            ok_pq = upload_file_to_cloud_object(tmp_gym_pq, "gymaware_data.parquet", content_type="application/octet-stream")
+            upload_file_to_cloud_object(sqlite_path, "rugby_database.sqlite", content_type="application/octet-stream")
+            return ok_pq
+        return True
+    except Exception:
+        return False
 
 
 def load_json_with_cloud_sync(remote_filename: str, local_path: str, default_factory=dict):
-    """
-    Carica un file JSON sincronizzandolo dal bucket remoto (al primo accesso per sessione)
-    o eseguendo il seed sul bucket se non ancora presente sul Cloud.
-    """
-    cfg = get_cloud_config()
-    if cfg["enabled"] and remote_filename not in _JSON_SYNCED_KEYS:
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f"_{remote_filename}")
-        os.close(tmp_fd)
-        try:
-            if download_cloud_object_to_file(remote_filename, tmp_path):
-                with open(tmp_path, "r", encoding="utf-8") as f:
-                    remote_data = json.load(f)
-                os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
-                shutil.copy2(tmp_path, local_path)
-                _JSON_SYNCED_KEYS.add(remote_filename)
-                return remote_data
-            elif os.path.exists(local_path):
-                upload_file_to_cloud_object(local_path, remote_filename, content_type="application/json")
-                _JSON_SYNCED_KEYS.add(remote_filename)
-        except Exception:
-            pass
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+    """Legge il file JSON direttamente dal disco locale (già sincronizzato all'avvio)."""
+    if not _PROCESS_SYNC_DONE:
+        sync_remote_to_local(force=False)
 
-    if os.path.exists(local_path):
-        try:
-            with open(local_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    mirror_path = get_local_mirror_path(remote_filename)
+    for p in (mirror_path, local_path):
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
     return default_factory()
 
 
 def save_json_with_cloud_sync(remote_filename: str, local_path: str, data: Any) -> bool:
     """
-    Salva un dizionario/lista in formato JSON su un file temporaneo, aggiorna il file locale,
-    carica la versione aggiornata sul bucket Cloud e rimuove il file temporaneo.
+    Salva il file JSON prima sul disco locale (`/tmp_data` e `data/`)
+    e poi esegue `upload_file` verso il bucket remoto.
     """
-    cfg = get_cloud_config()
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=f"_{remote_filename}")
-    os.close(tmp_fd)
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
+    mirror_path = os.path.join(TMP_DATA_DIR, remote_filename)
 
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        with open(mirror_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        try:
+            shutil.copy2(mirror_path, local_path)
+        except Exception:
+            with open(local_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
 
-        os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
-        shutil.copy2(tmp_path, local_path)
-
+        cfg = get_cloud_config()
         if cfg["enabled"]:
-            _JSON_SYNCED_KEYS.add(remote_filename)
-            return upload_file_to_cloud_object(tmp_path, remote_filename, content_type="application/json")
+            return upload_file_to_cloud_object(mirror_path, remote_filename, content_type="application/json")
         return True
     except Exception:
         return False
-    finally:
-        if os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
 
 def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR) -> Dict[str, Any]:
-    """
-    Funzione di utilità per allineare/esportare su Cloud Object Storage tutti i file
-    `.parquet`, `.sqlite` e `.json` presenti nella directory `data/`.
-    """
+    """Carica manualmente tutti i file locali verso il bucket remoto S3/Supabase."""
     cfg = get_cloud_config()
     if not cfg["enabled"]:
         return {"ok": False, "reason": "Cloud storage non configurato", "uploaded": []}
@@ -863,6 +746,12 @@ def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR) -> Dict[str, Any]:
             continue
         if fname.endswith(".parquet") or fname.endswith(".json") or fname.endswith(".sqlite"):
             ctype = "application/json" if fname.endswith(".json") else "application/octet-stream"
+            # Aggiorna anche tmp_data
+            try:
+                os.makedirs(TMP_DATA_DIR, exist_ok=True)
+                shutil.copy2(fpath, os.path.join(TMP_DATA_DIR, fname))
+            except Exception:
+                pass
             if upload_file_to_cloud_object(fpath, fname, content_type=ctype):
                 uploaded.append(fname)
             else:

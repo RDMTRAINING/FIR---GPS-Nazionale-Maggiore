@@ -17,23 +17,20 @@ if not hasattr(config, "render_navigation_cards"):
 
 import streamlit as st
 from config import get_theme, apply_custom_css, LOGO_PATH, get_logo_base64
+import cloud_storage
 import utils
-importlib.reload(utils)
 import auth
 import views.home
-importlib.reload(views.home)
 import views.pannello_controllo
 import views.storico_gps
 import views.oval_match
 import views.import_dati
-importlib.reload(views.import_dati)
 import views.report_6weeks
 import views.report_comparazione
 import views.admin_utenti
 import views.dashboard_home
 import views.analisi_individuale
 import views.palestra_gymaware
-importlib.reload(views.palestra_gymaware)
 import views.cambio_password
 import global_state
 import views.login
@@ -46,7 +43,14 @@ st.set_page_config(
 )
 
 
+@st.cache_resource
+def _init_cloud_local_mirror():
+    """Esegue il Local Mirroring una sola volta all'avvio del processo/container."""
+    return cloud_storage.sync_remote_to_local(force=False)
+
+
 def main():
+    _init_cloud_local_mirror()
     t = get_theme()
     apply_custom_css(t)
 
