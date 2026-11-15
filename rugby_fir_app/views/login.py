@@ -74,14 +74,4 @@ def render_login_page(t: dict):
                         else:
                             st.error("Credenziali non valide. Verifica username e password.")
 
-            st.markdown(
-                """
-                <div style="margin-top:16px; padding:12px 14px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; font-size:0.75rem; color:#475569;">
-                    <b style="color:#002B49;">Profili di Default Disponibili:</b><br>
-                    &bull; <b>Admin (Accesso Completo):</b> <code>admin</code> / <code>fir_admin_2026</code><br>
-                    &bull; <b>Visualizzatore (Solo Consultazione):</b> <code>staff_fir</code> / <code>fir_staff_2026</code>
-                </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.markdown("</div>", unsafe_allow_html=True)

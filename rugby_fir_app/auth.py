@@ -545,7 +545,7 @@ def render_terms_agreement_page(t: dict, user_info: dict):
                     FIR GPS PLATFORM
                 </div>
                 <div style="font-size:0.86rem; color:#93C5FD; font-weight:600; margin-top:4px;">
-                    Accreditamento Staff Tecnico & Medico &bull; Conformità GDPR & Proprietà Intellettuale
+                    Strumento Interno &bull; Privacy e Conservazione Dati Atleti
                 </div>
             </div>
             """,
@@ -555,34 +555,34 @@ def render_terms_agreement_page(t: dict, user_info: dict):
         with st.container():
             st.markdown(
                 """
-                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-top:none; border-radius:0 0 16px 16px; padding:30px 32px 24px 32px; box-shadow:0 12px 28px rgba(15,23,42,0.08); margin-bottom:16px;">
-                    <div style="font-size:1.24rem; font-weight:800; color:#002B49; margin-bottom:12px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
-                        Termini d'Uso, Riservatezza e Proprietà Intellettuale
+                <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-top:none; border-radius:0 0 16px 16px; padding:28px 30px 22px 30px; box-shadow:0 12px 28px rgba(15,23,42,0.08); margin-bottom:16px;">
+                    <div style="font-size:1.20rem; font-weight:800; color:#002B49; margin-bottom:10px; border-bottom:2px solid #E2E8F0; padding-bottom:8px;">
+                        Informativa e Condizioni d'Uso
                     </div>
-                    <p style="font-size:0.88rem; color:#334155; line-height:1.6; margin-bottom:16px;">
-                        Benvenuto nella Piattaforma Analytics della Nazionale Italiana Rugby. L'accesso a questo sistema è strettamente personale e riservato ai membri dello Staff Tecnico e Medico autorizzati. Prima di procedere, ti invitiamo a leggere e accettare le seguenti condizioni operative:
+                    <p style="font-size:0.90rem; color:#1E293B; line-height:1.6; margin-bottom:16px; font-weight:500;">
+                        Questa piattaforma è uno <b>strumento interno</b> riservato all'analisi delle prestazioni e dei dati degli <b>atleti di interesse nazionale</b>, nel pieno rispetto delle norme vigenti in materia di <b>privacy (GDPR) e corretta conservazione dei dati</b>.
                     </p>
-                    <div style="background:#F8FAFC; border-left:4px solid #0066B2; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:14px;">
-                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                    <div style="background:#F8FAFC; border-left:4px solid #0066B2; padding:12px 16px; border-radius:0 8px 8px 0; margin-bottom:12px;">
+                        <div style="font-size:0.90rem; font-weight:700; color:#002B49; margin-bottom:4px;">
                             1. Proprietà Intellettuale e Licenza d'Uso
                         </div>
-                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.5;">
                             È vietato riprodurre, copiare, analizzare (reverse engineering) o cedere l'accesso a terze parti senza l'esplicita autorizzazione.
                         </div>
                     </div>
-                    <div style="background:#F8FAFC; border-left:4px solid #D4AF37; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:14px;">
-                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                    <div style="background:#F8FAFC; border-left:4px solid #D4AF37; padding:12px 16px; border-radius:0 8px 8px 0; margin-bottom:12px;">
+                        <div style="font-size:0.90rem; font-weight:700; color:#002B49; margin-bottom:4px;">
                             2. Trattamento dei Dati Sensibili (GDPR)
                         </div>
-                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.5;">
                             Il database contiene categorie particolari di dati personali (Art. 9 Reg. UE 2016/679), tra cui parametri fisici e metriche di prestazione degli atleti. L'utente si impegna a trattare i dati esclusivamente per finalità tecniche e mediche, e a non diffonderli al di fuori degli ambienti protetti della F.I.R.
                         </div>
                     </div>
-                    <div style="background:#F8FAFC; border-left:4px solid #E11D48; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:18px;">
-                        <div style="font-size:0.92rem; font-weight:700; color:#002B49; margin-bottom:4px;">
+                    <div style="background:#F8FAFC; border-left:4px solid #E11D48; padding:12px 16px; border-radius:0 8px 8px 0; margin-bottom:16px;">
+                        <div style="font-size:0.90rem; font-weight:700; color:#002B49; margin-bottom:4px;">
                             3. Sicurezza delle Credenziali
                         </div>
-                        <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
+                        <div style="font-size:0.84rem; color:#475569; line-height:1.5;">
                             L'utente è l'unico responsabile della segretezza della propria password. Eventuali violazioni o fughe di dati (Data Breach) derivanti da una gestione negligente del proprio account ricadranno sotto la responsabilità dell'utente stesso.
                         </div>
                     </div>
@@ -591,26 +591,8 @@ def render_terms_agreement_page(t: dict, user_info: dict):
                 unsafe_allow_html=True,
             )
 
-            # Download documento PDF Atto di Nomina
-            doc_path = os.path.join(os.path.dirname(__file__), "assets", "Atto_Nomina_Privacy_FIR_RDM_v2.pdf")
-            if os.path.exists(doc_path):
-                with open(doc_path, "rb") as f_pdf:
-                    pdf_data = f_pdf.read()
-                st.download_button(
-                    label="📄 Scarica l'Atto di Nomina completo per i dettagli sulla Privacy",
-                    data=pdf_data,
-                    file_name="Atto_Nomina_Privacy_FIR_RDM_v2.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    key="btn_download_atto_nomina_pdf",
-                )
-            else:
-                st.info("Atto di Nomina Privacy e IP in fase di caricamento negli asset di sistema.")
-
-            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-
-            # Checkbox obbligatoria con stringa esatta
-            chk_label = "Dichiaro di aver letto, compreso e accettato i Termini d'Uso, i vincoli di Proprietà Intellettuale e le direttive sulla Privacy dei dati."
+            # Checkbox obbligatoria lineare e semplice
+            chk_label = "Dichiaro di aver compreso e accettato le condizioni d'uso e le norme sulla privacy e conservazione dei dati."
             accepted = st.checkbox(chk_label, key="chk_clickwrap_terms")
 
             st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
@@ -638,8 +620,8 @@ def render_terms_agreement_page(t: dict, user_info: dict):
 
             st.markdown(
                 """
-                <div style="text-align:center; padding-top:18px; font-size:0.72rem; color:#94A3B8;">
-                    MOV3 S.r.l. - Tutti i diritti riservati
+                <div style="text-align:center; padding-top:16px; font-size:0.72rem; color:#94A3B8;">
+                    Federazione Italiana Rugby &bull; Tutti i diritti riservati
                 </div>
                 """,
                 unsafe_allow_html=True,
