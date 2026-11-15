@@ -567,7 +567,7 @@ def render_terms_agreement_page(t: dict, user_info: dict):
                             1. Proprietà Intellettuale e Licenza d'Uso
                         </div>
                         <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
-                            Questa piattaforma web, incluse le architetture di database, le logiche di calcolo del microciclo, gli algoritmi di mapping e le interfacce, costituisce <b>tecnologia proprietaria esclusiva di Riccardo Di Maio (RDM)</b>. Il sistema è concesso in mero utilizzo funzionale temporaneo. È severamente vietato riprodurre, copiare, analizzare (reverse engineering) o cedere l'accesso a terze parti senza l'esplicita autorizzazione dell'autore.
+                            È vietato riprodurre, copiare, analizzare (reverse engineering) o cedere l'accesso a terze parti senza l'esplicita autorizzazione.
                         </div>
                     </div>
                     <div style="background:#F8FAFC; border-left:4px solid #D4AF37; padding:14px 16px; border-radius:0 8px 8px 0; margin-bottom:14px;">
@@ -583,7 +583,7 @@ def render_terms_agreement_page(t: dict, user_info: dict):
                             3. Sicurezza delle Credenziali
                         </div>
                         <div style="font-size:0.84rem; color:#475569; line-height:1.55;">
-                            L'utente è l'unico responsabile della segretezza della propria password. Eventuali Data Breach derivanti da gestione negligente del proprio account ricadranno sotto la responsabilità dell'utente stesso.
+                            L'utente è l'unico responsabile della segretezza della propria password. Eventuali violazioni o fughe di dati (Data Breach) derivanti da una gestione negligente del proprio account ricadranno sotto la responsabilità dell'utente stesso.
                         </div>
                     </div>
                 </div>
@@ -610,7 +610,7 @@ def render_terms_agreement_page(t: dict, user_info: dict):
             st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
             # Checkbox obbligatoria con stringa esatta
-            chk_label = "Dichiaro di aver letto, compreso e accettato i Termini d'Uso, i vincoli di Proprietà Intellettuale (Tecnologia RDM) e le direttive sulla Privacy dei dati."
+            chk_label = "Dichiaro di aver letto, compreso e accettato i Termini d'Uso, i vincoli di Proprietà Intellettuale e le direttive sulla Privacy dei dati."
             accepted = st.checkbox(chk_label, key="chk_clickwrap_terms")
 
             st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
