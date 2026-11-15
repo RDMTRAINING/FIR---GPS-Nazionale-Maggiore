@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from config import render_page_header, render_tab_navigation, render_navigation_cards, FIR_COLUMNS_META, FIR_COL_LABELS, RUGBY_ROLES, DEPARTMENTS, ROLE_TO_DEPT
 import utils
+import cloud_storage
 
 
 AUTO_ALIASES = {
@@ -1382,6 +1383,43 @@ def _render_last_uploads_banner():
     st.markdown(banner_html, unsafe_allow_html=True)
 
 
+def _render_cloud_storage_status_bar():
+    """Mostra lo stato di connessione al Cloud Object Storage (S3 / Supabase) e pulsante di allineamento."""
+    cfg = cloud_storage.get_cloud_config()
+    if cfg["enabled"]:
+        prov_label = "AWS S3 + DuckDB httpfs" if cfg["provider"] == "s3" else "Supabase Storage + DuckDB httpfs"
+        bucket_lbl = cfg["bucket_name"]
+        c_st1, c_st2 = st.columns([4.2, 1.2])
+        with c_st1:
+            st.markdown(
+                f'<div style="background:#ECFDF5; border:1px solid #10B981; border-radius:8px; padding:8px 14px; '
+                f'margin-bottom:12px; display:flex; align-items:center; justify-content:space-between;">'
+                f'<span style="font-size:0.80rem; font-weight:700; color:#065F46;">'
+                f'☁️ Cloud Object Storage Permanente Attivo: <b>{prov_label}</b> (Bucket: <code>{bucket_lbl}</code>) — '
+                f'Tutti gli upload GPS e GymAware sono salvati in modo permanente sul Cloud.</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with c_st2:
+            if st.button("🔄 Sincronizza Bucket", key="btn_force_cloud_sync", use_container_width=True):
+                with st.spinner("Sincronizzazione di tutti i file Parquet, SQLite e JSON sul Cloud Bucket..."):
+                    res = cloud_storage.sync_all_local_data_to_cloud()
+                    utils._clear_all_table_caches()
+                if res.get("ok"):
+                    st.success(f"Sincronizzati {len(res.get('uploaded', []))} file sul bucket '{bucket_lbl}'.")
+                else:
+                    st.warning(f"Caricati {len(res.get('uploaded', []))} file. Errori: {res.get('errors')}")
+    else:
+        st.markdown(
+            '<div style="background:#FFFBEB; border:1px solid #F59E0B; border-radius:8px; padding:8px 14px; margin-bottom:12px;">'
+            '<span style="font-size:0.80rem; font-weight:700; color:#92400E;">'
+            '⚠️ Modalità Storage Locale: configura <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code> e <code>BUCKET_NAME</code> '
+            '(oppure <code>SUPABASE_URL</code> e <code>SUPABASE_SERVICE_KEY</code>) nei <b>Secrets</b> di Streamlit Cloud per attivare la persistenza remota.'
+            '</span></div>',
+            unsafe_allow_html=True,
+        )
+
+
 # ==============================================================================
 # ENTRY POINT PRINCIPALE MODULO IMPORT
 # ==============================================================================
@@ -1392,6 +1430,7 @@ def render_import_dati(t: dict):
         "bi-cloud-arrow-up-fill",
     )
 
+    _render_cloud_storage_status_bar()
     _render_last_uploads_banner()
 
     if st.session_state.get("user_role") == "viewer":

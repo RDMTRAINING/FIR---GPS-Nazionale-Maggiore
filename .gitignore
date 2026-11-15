@@ -1,5 +1,7 @@
 # Secrets and credentials
 .streamlit/secrets.toml
+rugby_fir_app/.streamlit/secrets.toml
+**/secrets.toml
 .env
 *.env
 

@@ -3,6 +3,7 @@ import os
 import json
 import re
 import plotly.graph_objects as go
+import cloud_storage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -88,27 +89,14 @@ def get_block_color(block_name: str) -> str:
 
 
 def load_all_timelines() -> dict:
-    """Carica tutte le timeline salvate per ciascuna sessione."""
-    if os.path.exists(TIMELINES_PATH):
-        try:
-            with open(TIMELINES_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            pass
-    return {}
+    """Carica tutte le timeline salvate per ciascuna sessione sincronizzando dal Cloud Object Storage."""
+    data = cloud_storage.load_json_with_cloud_sync("session_timelines.json", TIMELINES_PATH, default_factory=dict)
+    return data if isinstance(data, dict) else {}
 
 
 def save_all_timelines(timelines: dict) -> bool:
-    """Salva tutte le timeline nel file JSON su disco."""
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(TIMELINES_PATH, "w", encoding="utf-8") as f:
-            json.dump(timelines, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception:
-        return False
+    """Salva tutte le timeline nel file JSON e sul Cloud Object Storage."""
+    return cloud_storage.save_json_with_cloud_sync("session_timelines.json", TIMELINES_PATH, timelines)
 
 
 def get_session_timeline(session_name: str) -> list:

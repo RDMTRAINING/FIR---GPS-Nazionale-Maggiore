@@ -8,6 +8,7 @@ from urllib.parse import quote
 from email.mime.text import MIMEText
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
+import cloud_storage
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
@@ -196,31 +197,30 @@ def init_auth():
 def get_users() -> List[Dict]:
     init_auth()
     try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = json.load(f)
-            # Garantisci retrocompatibilità se mancano campi email o must_change_password
-            changed = False
-            for u in users:
-                if "email" not in u:
-                    u_nm = u.get("username", "")
-                    u["email"] = u_nm if "@" in u_nm else f"{u_nm}@federugby.it"
-                    changed = True
-                if "must_change_password" not in u:
-                    u["must_change_password"] = False
-                    changed = True
-                if "has_accepted_terms" not in u:
-                    u["has_accepted_terms"] = True if (u.get("role") == "admin" and u.get("is_primary")) else False
-                    changed = True
-            if changed:
-                _save_users(users)
-            return users
+        users = cloud_storage.load_json_with_cloud_sync("users.json", USERS_FILE, default_factory=list)
+        if not isinstance(users, list):
+            return []
+        changed = False
+        for u in users:
+            if "email" not in u:
+                u_nm = u.get("username", "")
+                u["email"] = u_nm if "@" in u_nm else f"{u_nm}@federugby.it"
+                changed = True
+            if "must_change_password" not in u:
+                u["must_change_password"] = False
+                changed = True
+            if "has_accepted_terms" not in u:
+                u["has_accepted_terms"] = True if (u.get("role") == "admin" and u.get("is_primary")) else False
+                changed = True
+        if changed:
+            _save_users(users)
+        return users
     except Exception:
         return []
 
 
 def _save_users(users: List[Dict]):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=2, ensure_ascii=False)
+    cloud_storage.save_json_with_cloud_sync("users.json", USERS_FILE, users)
 
 
 def verify_user(username: str, password: str) -> Optional[Dict]:

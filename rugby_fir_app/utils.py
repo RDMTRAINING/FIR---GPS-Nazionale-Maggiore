@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from config import FIR_COLUMNS_META, FIR_NUMERIC_COLS, DEFAULT_COACH_TARGETS, ROLE_TO_DEPT, RUGBY_ROLES, DEPARTMENTS
+import cloud_storage
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -56,19 +57,12 @@ def detect_fir_session_type(session_name: str) -> str:
 
 
 def get_fir_session_types() -> dict:
-    types_map = {}
-    if os.path.exists(FIR_SESSION_TYPES_PATH):
-        try:
-            with open(FIR_SESSION_TYPES_PATH, "r", encoding="utf-8") as f:
-                types_map = json.load(f)
-        except Exception:
-            types_map = {}
-    return types_map
+    res = cloud_storage.load_json_with_cloud_sync("fir_session_types.json", FIR_SESSION_TYPES_PATH, default_factory=dict)
+    return res if isinstance(res, dict) else {}
 
 
 def save_fir_session_types(types_map: dict):
-    with open(FIR_SESSION_TYPES_PATH, "w", encoding="utf-8") as f:
-        json.dump(types_map, f, indent=2, ensure_ascii=False)
+    cloud_storage.save_json_with_cloud_sync("fir_session_types.json", FIR_SESSION_TYPES_PATH, types_map)
 
 
 def get_session_assigned_type(date_str: str, session_name: str) -> str:
@@ -100,18 +94,12 @@ def get_all_fir_unique_sessions() -> pd.DataFrame:
 
 
 def get_session_player_statuses() -> dict:
-    if os.path.exists(SESSION_PLAYER_STATUS_PATH):
-        try:
-            with open(SESSION_PLAYER_STATUS_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+    res = cloud_storage.load_json_with_cloud_sync("session_player_status.json", SESSION_PLAYER_STATUS_PATH, default_factory=dict)
+    return res if isinstance(res, dict) else {}
 
 
 def save_session_player_statuses(status_map: dict):
-    with open(SESSION_PLAYER_STATUS_PATH, "w", encoding="utf-8") as f:
-        json.dump(status_map, f, indent=2, ensure_ascii=False)
+    cloud_storage.save_json_with_cloud_sync("session_player_status.json", SESSION_PLAYER_STATUS_PATH, status_map)
 
 
 # Alias per retrocompatibilità
@@ -144,14 +132,13 @@ def _parquet_path(table_name: str) -> str:
 
 @st.cache_data(ttl=60)
 def load_table(table_name: str) -> pd.DataFrame:
+    """
+    Carica la tabella Parquet interrogando direttamente il Cloud Object Storage
+    tramite DuckDB + httpfs (`s3://bucket/{table_name}.parquet`) o sincronizzando
+    il file remoto, con fallback trasparente sul file locale in `data/`.
+    """
     p = _parquet_path(table_name)
-    if os.path.exists(p):
-        try:
-            df = pd.read_parquet(p)
-            return df
-        except Exception:
-            return pd.DataFrame()
-    return pd.DataFrame()
+    return cloud_storage.load_parquet_with_cloud_sync(table_name, p)
 
 
 def is_truthy(v) -> bool:
@@ -163,8 +150,7 @@ def is_truthy(v) -> bool:
     return str(v).strip().lower() in ("true", "1", "t", "yes")
 
 
-def save_table(table_name: str, df: pd.DataFrame):
-    p = _parquet_path(table_name)
+def _clean_dataframe_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if "manual_override" in out.columns:
         out["manual_override"] = out["manual_override"].apply(is_truthy).astype(bool)
@@ -177,12 +163,37 @@ def save_table(table_name: str, df: pd.DataFrame):
             out[col] = out[col].apply(lambda x: str(x) if x is not None else None).replace(
                 {"NaT": None, "None": None, "nan": None, "<NA>": None}
             )
-    out.to_parquet(p, index=False)
+    return out
+
+
+def _clear_all_table_caches():
     load_table.clear()
-    try:
-        _compute_dynamic_roster_metrics.clear()
-    except Exception:
-        pass
+    for fn_name in (
+        "_compute_dynamic_roster_metrics",
+        "get_distinct_sessions_catalog",
+        "get_typology_rates_cache",
+        "get_history_team_counts",
+        "get_players_df",
+        "get_oval_matches_df",
+    ):
+        fn_obj = globals().get(fn_name)
+        if fn_obj is not None and hasattr(fn_obj, "clear"):
+            try:
+                fn_obj.clear()
+            except Exception:
+                pass
+
+
+def save_table(table_name: str, df: pd.DataFrame):
+    """
+    Salva e sovrascrive il file Parquet su un file temporaneo, lo carica direttamente
+    sul bucket Cloud remoto (S3 / Supabase Storage), aggiorna la cache locale e
+    rimuove il file temporaneo.
+    """
+    p = _parquet_path(table_name)
+    out = _clean_dataframe_for_parquet(df)
+    cloud_storage.save_parquet_with_cloud_sync(table_name, out, p)
+    _clear_all_table_caches()
 
 
 def get_next_id(df: pd.DataFrame, id_col: str = "id") -> int:
@@ -197,21 +208,16 @@ def get_next_id(df: pd.DataFrame, id_col: str = "id") -> int:
 # ==============================================================================
 def get_coach_config() -> dict:
     cfg = DEFAULT_COACH_TARGETS.copy()
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-                cfg.update(saved)
-        except Exception:
-            pass
+    saved = cloud_storage.load_json_with_cloud_sync("app_config.json", CONFIG_PATH, default_factory=dict)
+    if isinstance(saved, dict):
+        cfg.update(saved)
     return cfg
 
 
 def save_coach_config(new_cfg: dict):
     cfg = get_coach_config()
     cfg.update(new_cfg)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    cloud_storage.save_json_with_cloud_sync("app_config.json", CONFIG_PATH, cfg)
 
 
 # ==============================================================================
@@ -1308,9 +1314,16 @@ def save_gps_history_record(record_data: dict, record_id: int = None) -> int:
 
 
 def bulk_insert_gps_history(rows_df: pd.DataFrame) -> dict:
+    """
+    Inserisce nuovi dati GPS nell'archivio storico eseguendo la pipeline di Cloud Ingestion:
+    a) Scarica temporaneamente il Parquet remoto `gps_history.parquet` dal Cloud Object Storage.
+    b) Appende e deduplica i nuovi dati tramite Pandas / DuckDB.
+    c) Carica (sovrascrive) il Parquet aggiornato direttamente sul bucket remoto.
+    d) Elimina i file temporanei locali e invalida le cache.
+    """
     if rows_df.empty:
         return {"inserted": 0, "duplicates": 0, "duplicate_df": pd.DataFrame(), "total": 0}
-    df = load_table("gps_history")
+
     rows_df = rows_df.copy()
     rows_df["created_at"] = datetime.now().isoformat()
     for col in FIR_NUMERIC_COLS:
@@ -1326,44 +1339,59 @@ def bulk_insert_gps_history(rows_df: pd.DataFrame) -> dict:
         di = pd.to_numeric(d.get("distance_m", pd.Series([0] * len(d))), errors="coerce").fillna(0.0).round(0).astype(int).astype(str)
         return tt + "|" + dt + "|" + pl + "|" + se + "|" + pe + "|" + di
 
-    rows_df["_dup_key"] = _make_key_series(rows_df)
+    def _merge_gps_history(existing_df: pd.DataFrame, incoming_df: pd.DataFrame) -> dict:
+        df_base = existing_df.copy() if not existing_df.empty else pd.DataFrame()
+        inc = incoming_df.copy()
+        inc["_dup_key"] = _make_key_series(inc)
 
-    if not df.empty:
-        df["_dup_key"] = _make_key_series(df)
-        existing_keys = set(df["_dup_key"].dropna().unique())
+        if not df_base.empty:
+            df_base["_dup_key"] = _make_key_series(df_base)
+            existing_keys = set(df_base["_dup_key"].dropna().unique())
 
-        is_dup_mask = rows_df["_dup_key"].isin(existing_keys)
-        dup_df = rows_df[is_dup_mask].copy().drop(columns=["_dup_key"], errors="ignore")
-        new_df = rows_df[~is_dup_mask].copy().drop(columns=["_dup_key"], errors="ignore")
-        df = df.drop(columns=["_dup_key"], errors="ignore")
-    else:
-        dup_df = rows_df.iloc[0:0].copy().drop(columns=["_dup_key"], errors="ignore")
-        new_df = rows_df.copy().drop(columns=["_dup_key"], errors="ignore")
+            is_dup_mask = inc["_dup_key"].isin(existing_keys)
+            dup_df = inc[is_dup_mask].copy().drop(columns=["_dup_key"], errors="ignore")
+            new_df = inc[~is_dup_mask].copy().drop(columns=["_dup_key"], errors="ignore")
+            df_base = df_base.drop(columns=["_dup_key"], errors="ignore")
+        else:
+            dup_df = inc.iloc[0:0].copy().drop(columns=["_dup_key"], errors="ignore")
+            new_df = inc.copy().drop(columns=["_dup_key"], errors="ignore")
 
-    # Duplicati interni al dataset inviato
-    if not new_df.empty:
-        new_df["_dup_key"] = _make_key_series(new_df)
-        internal_dups = new_df[new_df.duplicated(subset=["_dup_key"], keep="first")]
-        if not internal_dups.empty:
-            dup_df = pd.concat([dup_df, internal_dups.drop(columns=["_dup_key"], errors="ignore")], ignore_index=True)
-            new_df = new_df.drop_duplicates(subset=["_dup_key"], keep="first")
-        new_df = new_df.drop(columns=["_dup_key"], errors="ignore")
+        if not new_df.empty:
+            new_df["_dup_key"] = _make_key_series(new_df)
+            internal_dups = new_df[new_df.duplicated(subset=["_dup_key"], keep="first")]
+            if not internal_dups.empty:
+                dup_df = pd.concat([dup_df, internal_dups.drop(columns=["_dup_key"], errors="ignore")], ignore_index=True)
+                new_df = new_df.drop_duplicates(subset=["_dup_key"], keep="first")
+            new_df = new_df.drop(columns=["_dup_key"], errors="ignore")
 
-    if not new_df.empty:
-        combined = pd.concat([df, new_df], ignore_index=True)
-        combined["id"] = range(1, len(combined) + 1)
-        save_table("gps_history", combined)
-        try:
-            get_history_team_counts.clear()
-            get_players_df.clear()
-        except Exception:
-            pass
+        if not new_df.empty:
+            combined = pd.concat([df_base, new_df], ignore_index=True)
+            combined["id"] = range(1, len(combined) + 1)
+            combined = _clean_dataframe_for_parquet(combined)
+        else:
+            combined = _clean_dataframe_for_parquet(df_base) if not df_base.empty else df_base
+
+        return {
+            "combined_df": combined,
+            "inserted": len(new_df),
+            "duplicates": len(dup_df),
+            "duplicate_df": dup_df.reset_index(drop=True),
+            "total": len(incoming_df),
+        }
+
+    res = cloud_storage.ingest_and_append_remote_parquet(
+        table_name="gps_history",
+        new_rows_df=rows_df,
+        local_fallback_path=_parquet_path("gps_history"),
+        merge_fn=_merge_gps_history,
+    )
+    _clear_all_table_caches()
 
     return {
-        "inserted": len(new_df),
-        "duplicates": len(dup_df),
-        "duplicate_df": dup_df.reset_index(drop=True),
-        "total": len(rows_df),
+        "inserted": res["inserted"],
+        "duplicates": res["duplicates"],
+        "duplicate_df": res["duplicate_df"],
+        "total": res["total"],
     }
 
 
@@ -4680,7 +4708,7 @@ def get_gymaware_conn():
 
 
 def init_gymaware_db():
-    """Inizializza la tabella gymaware_data nel database SQLite e popola con i dati di seed se vuota."""
+    """Inizializza la tabella gymaware_data nel database SQLite, sincronizza dal Cloud Object Storage e popola con i dati di seed se vuota."""
     conn = get_gymaware_conn()
     cur = conn.cursor()
     cur.execute(
@@ -4714,7 +4742,16 @@ def init_gymaware_db():
     """
     )
     conn.commit()
+    conn.close()
 
+    # Sincronizza i dati remoti dal Cloud Object Storage (gymaware_data.parquet)
+    try:
+        cloud_storage.pull_gymaware_from_cloud(GYMAWARE_DB_PATH)
+    except Exception:
+        pass
+
+    conn = get_gymaware_conn()
+    cur = conn.cursor()
     # Se la tabella è vuota, carica il file seed se disponibile
     count = cur.execute("SELECT COUNT(*) FROM gymaware_data").fetchone()[0]
     if count == 0 and os.path.exists(GYMAWARE_SEED_CSV):
@@ -4836,6 +4873,12 @@ def save_gymaware_from_df(df: pd.DataFrame, conn=None, replace_all=False) -> int
 
     if close_conn:
         conn.close()
+
+    # Esporta in un file temporaneo Parquet e carica sul bucket Cloud (S3 / Supabase Storage)
+    try:
+        cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
+    except Exception:
+        pass
     return inserted_count
 
 
@@ -5154,6 +5197,11 @@ def delete_gymaware_date(date_str) -> int:
     conn.commit()
     count = cur.rowcount
     conn.close()
+    if count > 0:
+        try:
+            cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
+        except Exception:
+            pass
     return count
 
 
@@ -5170,6 +5218,11 @@ def delete_gymaware_athlete_date(athlete_name: str, date_str) -> int:
     conn.commit()
     count = cur.rowcount
     conn.close()
+    if count > 0:
+        try:
+            cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
+        except Exception:
+            pass
     return count
 
 
@@ -5353,6 +5406,11 @@ def update_gymaware_rows(df_edited: pd.DataFrame) -> int:
 
     conn.commit()
     conn.close()
+    if updated_count > 0:
+        try:
+            cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
+        except Exception:
+            pass
     return updated_count
 
 
@@ -5364,6 +5422,10 @@ def delete_gymaware_all() -> int:
     conn.commit()
     count = cur.rowcount
     conn.close()
+    try:
+        cloud_storage.push_gymaware_to_cloud(GYMAWARE_DB_PATH)
+    except Exception:
+        pass
     return count
 
 
