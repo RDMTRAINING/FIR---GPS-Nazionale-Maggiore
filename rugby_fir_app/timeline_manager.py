@@ -115,6 +115,29 @@ def get_session_timeline(session_name: str) -> list:
     return []
 
 
+def save_session_timeline(session_name: str, blocks: list) -> bool:
+    """
+    Salva o aggiorna la timeline dei blocchi associata a una specifica sessione.
+    Valida e normalizza ciascun blocco ({'name': str, 'duration': float > 0}).
+    Sincronizza sul file locale e sul Cloud Object Storage.
+    """
+    s_key = str(session_name or "").strip()
+    if not s_key:
+        return False
+    timelines = load_all_timelines()
+    clean_blocks = []
+    for b in (blocks or []):
+        name = str(b.get("name", "")).strip()
+        try:
+            dur = float(b.get("duration", 0))
+        except (ValueError, TypeError):
+            dur = 0.0
+        if name and dur > 0:
+            clean_blocks.append({"name": name, "duration": round(dur, 1)})
+    timelines[s_key] = clean_blocks
+    return save_all_timelines(timelines)
+
+
 def delete_session_timeline(session_name: str) -> bool:
     """Elimina la timeline associata a una specifica sessione."""
     s_key = str(session_name or "").strip()
