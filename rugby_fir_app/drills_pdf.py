@@ -3,7 +3,7 @@
 Generatore PDF Istituzionale FIR per il modulo "Analisi & Confronto Drills".
 Produce fascicoli A4 Landscape fedeli alla pagina della webapp, completi di:
   - Header ufficiale FIR con logo, data, seduta, ambito/ruolo e metodologia (Hml >25.5W, HSR >18 Av / >20 Tq)
-  - Griglia KPI Cards (Tempo, Distanza/WR, Hml, HSR, DSL/Vmax)
+  - Griglia KPI Cards (Tempo, Distanza/WR, Hml, HSR, Vmax/Impatti)
   - Grafici Plotly ad alta risoluzione (Volume vs WR, Intensità al Minuto, Mappa Durata×Intensità,
     Ripartizione % Tempo/Carico, Confronto Secondario, Radar Multi-Drill)
   - Tabelle comparative complete e differenziali Δ%
@@ -299,9 +299,9 @@ def crea_pdf_drills_sessione(
         t_headers = [
             "Ord.", "Drill", "Att.", "Escl.", "Durata", "% T",
             "Dist. Tot (m)", "WR (m/m)", "Hml Tot (m)", "Hml/m",
-            "HSR Tot (m)", "HSR/m", "DSL Tot", "Imp. Tot", "Acc", "Dec",
+            "HSR Tot (m)", "HSR/m", "Imp. Tot", "Acc", "Dec",
         ]
-        t_widths = [26, 118, 28, 28, 44, 34, 62, 48, 60, 44, 60, 44, 56, 48, 54, 54]
+        t_widths = [26, 128, 30, 30, 48, 36, 66, 52, 64, 48, 64, 48, 56, 56, 56]
         t_rows = []
         for _, r in df_sess.iterrows():
             dur_v = float(r.get("Duration_Min", 0.0))
@@ -320,7 +320,6 @@ def crea_pdf_drills_sessione(
                     f"{float(r.get('HMPD_per_Min', 0.0)):.1f}",
                     f"{float(r['HSR_Sum']):,.0f}",
                     f"{float(r.get('HSR_per_Min', 0.0)):.1f}",
-                    f"{float(r['Dynamic_Stress_Load_Sum']):,.0f}",
                     f"{float(r['Heavy_Impacts_Sum']):,.0f}",
                     f"{float(r['Acc_Events_Sum']):,.0f}",
                     f"{float(r['Dec_Events_Sum']):,.0f}",
@@ -330,9 +329,9 @@ def crea_pdf_drills_sessione(
         t_headers = [
             "Ord.", "Drill", "Att.", "Durata", "% T",
             "Dist (m)", "WR (m/m)", "Δ WR%", "Hml (m)", "Hml/m",
-            "HSR (m)", "HSR/m", "Vmax", "Picco", "DSL", "DSL/m", "Imp.",
+            "HSR (m)", "HSR/m", "Vmax", "Picco", "Imp.", "Acc", "Dec",
         ]
-        t_widths = [26, 114, 28, 48, 34, 52, 46, 42, 48, 42, 48, 42, 42, 42, 52, 44, 58]
+        t_widths = [26, 120, 28, 50, 36, 54, 48, 44, 52, 44, 52, 44, 44, 44, 42, 40, 40]
         t_rows = []
         for _, r in df_sess.iterrows():
             dur_v = float(r.get("Duration_Min", 0.0))
@@ -356,9 +355,9 @@ def crea_pdf_drills_sessione(
                     f"{float(r.get('HSR_per_Min', 0.0)):.1f}",
                     f"{float(r.get('Max_Speed', 0.0)):.1f}",
                     f"{float(r.get('Max_Speed_Peak', 0.0)):.1f}",
-                    f"{float(r.get('Dynamic_Stress_Load', 0.0)):,.1f}",
-                    f"{float(r.get('DSL_per_Min', 0.0)):.1f}",
                     f"{float(r.get('Heavy_Impacts', 0.0)):.1f}",
+                    f"{float(r.get('Acc_Events', 0.0)):.1f}",
+                    f"{float(r.get('Dec_Events', 0.0)):.1f}",
                 ]
             )
 
@@ -381,7 +380,7 @@ def crea_pdf_drills_sessione(
     elements.append(
         _section_banner(
             "3. MAPPA DURATA × INTENSITÀ &amp; RIPARTIZIONE % DEL TEMPO E DEL CARICO TRA I DRILLS",
-            "Quadranti operativi dei drills e quota percentuale di tempo, distanza, Hml, HSR e DSL assorbita da ciascun blocco.",
+            "Quadranti operativi dei drills e quota percentuale di tempo, distanza, Hml e HSR assorbita da ciascun blocco.",
             total_width=W,
         )
     )
@@ -393,7 +392,7 @@ def crea_pdf_drills_sessione(
         elements.append(
             _section_banner(
                 "4. CONFRONTO SECONDARIO VOLUMETRICO / MECCANICO TRA I DRILLS",
-                "Vista secondaria selezionata nella piattaforma (Hml vs HSR, Avanti vs Trequarti, DSL vs Impatti, Velocità o Acc/Dec).",
+                "Vista secondaria selezionata nella piattaforma (Hml vs HSR, Avanti vs Trequarti, Velocità, Acc/Dec o Heavy Impacts).",
                 total_width=W,
             )
         )
@@ -429,9 +428,9 @@ def crea_pdf_drills_sessione(
             elements.append(Spacer(1, 5))
             r_headers = [
                 "Ruolo", "Reparto", "Att. Med.", "Dist. Pro-Cap", "Dist. Tot",
-                "WR", "Hml Pro-Cap", "Hml Tot", "HSR Pro-Cap", "HSR Tot", "DSL Pro-Cap", "Vmax",
+                "WR", "Hml Pro-Cap", "Hml Tot", "HSR Pro-Cap", "HSR Tot", "Vmax",
             ]
-            r_widths = [94, 58, 46, 68, 68, 46, 66, 66, 66, 66, 68, 96]
+            r_widths = [104, 64, 52, 74, 74, 52, 74, 74, 74, 74, 92]
             r_rows = []
             for _, rr in df_roles_compact.iterrows():
                 r_rows.append(
@@ -446,7 +445,6 @@ def crea_pdf_drills_sessione(
                         f"{float(rr['HMPD_Sum']):,.0f} m",
                         f"{float(rr['HSR']):,.1f} m",
                         f"{float(rr['HSR_Sum']):,.0f} m",
-                        f"{float(rr['Dynamic_Stress_Load']):,.1f}",
                         f"{float(rr['Max_Speed']):.1f} km/h",
                     ]
                 )
@@ -550,9 +548,9 @@ def crea_pdf_drill_bank(
     h_headers = [
         "Data", "Allenamento", "Ord.", "Att.", "Durata",
         "Dist Pro-C", "Dist Tot", "WR", "Δ WR%", "Hml Pro-C",
-        "Hml/m", "HSR Pro-C", "HSR/m", "DSL Pro-C", "Imp.",
+        "Hml/m", "HSR Pro-C", "HSR/m", "Vmax", "Imp.",
     ]
-    h_widths = [54, 108, 28, 30, 48, 56, 58, 46, 44, 56, 44, 56, 44, 58, 78]
+    h_widths = [54, 114, 28, 30, 50, 58, 60, 48, 46, 58, 46, 58, 46, 52, 60]
     h_rows = []
     for _, r in df_hist.head(22).iterrows():
         dur_v = float(r.get("Duration_Min", 0.0))
@@ -573,7 +571,7 @@ def crea_pdf_drill_bank(
                 f"{float(r.get('HMPD_per_Min', 0.0)):.1f}",
                 f"{float(r['HSR']):,.1f}",
                 f"{float(r.get('HSR_per_Min', 0.0)):.1f}",
-                f"{float(r['Dynamic_Stress_Load']):,.1f}",
+                f"{float(r.get('Max_Speed', 0.0)):.1f}",
                 f"{float(r['Heavy_Impacts']):.1f}",
             ]
         )
@@ -597,7 +595,7 @@ def crea_pdf_drill_bank(
         elements.append(
             _section_banner(
                 "2. PROFILO MULTI-METRICA (RADAR) &amp; MAPPA DURATA × INTENSITÀ TRA DRILLS",
-                "Confronto diretto tra esercitazioni su Durata (min), Work Rate, Hml/min, HSR/min, DSL/min e Velocità Massima.",
+                "Confronto diretto tra esercitazioni su Durata (min), Distanza (m), Work Rate, Hml/min, HSR/min e Velocità Massima.",
                 total_width=W,
             )
         )

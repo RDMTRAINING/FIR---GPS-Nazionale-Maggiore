@@ -6,7 +6,7 @@ Funzionalità principali:
   - Riconoscimento automatico giocatori attivi (esclusione panchina/rotazioni/valori nulli)
   - Metodologia FIR rigorosa: Hml (>25.5W), HSR differenziato (>18 km/h Avanti / >20 km/h Trequarti),
     normalizzazione volumetrica per ruolo (Somma Ruolo / N° Giocatori Attivi del Ruolo)
-  - Analisi approfondita Drill vs Drill con integrazione completa del Tempo (Durata, % Tempo, m/min, Hml/min, HSR/min, DSL/min)
+  - Analisi approfondita Drill vs Drill con integrazione completa del Tempo (Durata, % Tempo, m/min, Hml/min, HSR/min)
   - Drill Bank longitudinale & Arena Confronto Multi-Drill (Radar 6 assi, Mappa Durata×Intensità, Benchmark Δ%)
   - Esportazione PDF istituzionale FIR completa e fedele alla pagina della webapp.
 """
@@ -56,8 +56,6 @@ METRIC_LABELS_AVG: Dict[str, str] = {
     "Duration_Min": "Durata Media (min)",
     "Max_Speed": "Max Speed Media Attivi (km/h)",
     "Max_Speed_Peak": "Picco Max Speed (km/h)",
-    "Dynamic_Stress_Load": "DSL / Ext Work Pro-Capite",
-    "DSL_per_Min": "DSL/min Pro-Capite",
     "Heavy_Impacts": "Heavy Impacts Pro-Capite",
     "Acc_Events": "Accelerazioni Pro-Capite (n)",
     "Dec_Events": "Decelerazioni Pro-Capite (n)",
@@ -69,7 +67,6 @@ METRIC_LABELS_TOTAL: Dict[str, str] = {
     "HMPD_Sum": "Hml Totale Gruppo/Ruolo (m)",
     "HSR_Sum": "HSR Totale (>18 Av / >20 Tq) (m)",
     "VHSR_Sum": "VHSR Totale Gruppo/Ruolo (m)",
-    "Dynamic_Stress_Load_Sum": "DSL / Ext Work Totale Gruppo/Ruolo",
     "Heavy_Impacts_Sum": "Heavy Impacts Totali Gruppo/Ruolo",
     "Acc_Events_Sum": "Accelerazioni Totali Gruppo/Ruolo (n)",
     "Dec_Events_Sum": "Decelerazioni Totali Gruppo/Ruolo (n)",
@@ -601,7 +598,7 @@ def _render_tab_sessione(
                                         · ⏱️ {s_rec['Duration_Min']:.1f}' ({_fmt_mmss(s_rec['Duration_Min'])}) ·
                                         ⚡ <b style="color:{FIR_AZZURO};">{s_rec['Work_Rate']:.1f} m/min</b><br>
                                         <span style="color:#334155;">
-                                            <b>Pro-Capite:</b> {s_rec['Total_Distance']:.0f}m · Hml {s_rec['HMPD']:.0f}m ({s_rec['HMPD_per_Min']:.1f}/m) · HSR {s_rec['HSR']:.0f}m · DSL {s_rec['Dynamic_Stress_Load']:.1f}
+                                            <b>Pro-Capite:</b> {s_rec['Total_Distance']:.0f}m · Hml {s_rec['HMPD']:.0f}m ({s_rec['HMPD_per_Min']:.1f}/m) · HSR {s_rec['HSR']:.0f}m · Vmax {s_rec['Max_Speed']:.1f} km/h
                                         </span><br>
                                         <span style="color:#64748B;">
                                             <b>Totale Gruppo:</b> {s_rec['Total_Distance_Sum']:,.0f}m · Hml {s_rec['HMPD_Sum']:,.0f}m · HSR {s_rec['HSR_Sum']:,.0f}m
@@ -691,7 +688,7 @@ def _render_tab_sessione(
             📊 Analisi &amp; Confronto Diretto tra i Drills della Seduta
         </div>
         <div style="font-size:0.78rem; color:#E0F2FE; margin-top:2px;">
-            Confronta volume, <b>durata/tempo effettivo</b> e densità al minuto (<b>Work Rate, Hml/min, HSR/min, DSL/min</b>)
+            Confronta volume, <b>durata/tempo effettivo</b> e densità al minuto (<b>Work Rate, Hml/min, HSR/min</b>)
             tra i blocchi della seduta. Filtra per <b>Squadra, Reparto o Singolo Ruolo</b> (calcolo rigoroso: <b>Σ Ruolo / N° Attivi del Ruolo</b> · HSR &gt;18 km/h Avanti / &gt;20 km/h Trequarti).
         </div>
     </div>
@@ -788,7 +785,7 @@ def _render_tab_sessione(
     mean_wr_sess = float(df_sess["Work_Rate"].mean())
     df_sess["Delta_WR_%"] = np.where(mean_wr_sess > 0, ((df_sess["Work_Rate"] - mean_wr_sess) / mean_wr_sess) * 100.0, 0.0).round(1)
 
-    # 5 Card KPI Seduta (Tempo integrato + Hml + HSR differenziato + DSL/Vmax)
+    # 5 Card KPI Seduta (Tempo integrato + Distanza/WR + Hml + HSR differenziato + Vmax/Impatti)
     avg_act_p = float(df_sess["Active_Players_Count"].mean())
     tot_exc_p = int(df_sess["Excluded_Players_Count"].sum())
 
@@ -796,8 +793,9 @@ def _render_tab_sessione(
         dist_kpi = float(df_sess["Total_Distance_Sum"].sum())
         hml_kpi = float(df_sess["HMPD_Sum"].sum())
         hsr_kpi = float(df_sess["HSR_Sum"].sum())
-        dsl_kpi = float(df_sess["Dynamic_Stress_Load_Sum"].sum())
         imp_kpi = float(df_sess["Heavy_Impacts_Sum"].sum())
+        acc_kpi = float(df_sess["Acc_Events_Sum"].sum())
+        dec_kpi = float(df_sess["Dec_Events_Sum"].sum())
         wr_sess_avg = round(float(df_sess["Total_Distance"].sum()) / tot_dur, 1) if tot_dur > 0 else float(df_sess["Work_Rate"].mean())
         hml_min_avg = round(float(df_sess["HMPD"].sum()) / tot_dur, 1) if tot_dur > 0 else float(df_sess["HMPD_per_Min"].mean())
         hsr_min_avg = round(float(df_sess["HSR"].sum()) / tot_dur, 1) if tot_dur > 0 else float(df_sess["HSR_per_Min"].mean())
@@ -806,7 +804,7 @@ def _render_tab_sessione(
             ("Distanza Totale & WR", f"{dist_kpi:,.0f} m", f"⚡ WR Pro-Cap.: {wr_sess_avg:.1f} m/min", FIR_AZZURO),
             ("Hml Totale (>25.5W)", f"{hml_kpi:,.0f} m", f"🔥 Media: {hml_min_avg:.1f} Hml/min pro-cap.", FIR_ORO),
             ("HSR Totale (>18/>20)", f"{hsr_kpi:,.0f} m", f"🏃 Media: {hsr_min_avg:.1f} HSR/min pro-cap.", FIR_AZZURO),
-            ("DSL & Impatti Totali", f"{dsl_kpi:,.0f}", f"💥 Heavy Imp. Tot.: {imp_kpi:,.0f}", FIR_NAVY),
+            ("Impatti & Acc/Dec Tot.", f"{imp_kpi:,.0f} imp.", f"⚡ Acc: {acc_kpi:,.0f} · Dec: {dec_kpi:,.0f}", FIR_NAVY),
         ]
     else:
         dist_kpi = float(df_sess["Total_Distance"].sum())
@@ -815,14 +813,15 @@ def _render_tab_sessione(
         hml_min_avg = round(hml_kpi / tot_dur, 1) if tot_dur > 0 else float(df_sess["HMPD_per_Min"].mean())
         hsr_kpi = float(df_sess["HSR"].sum())
         hsr_min_avg = round(hsr_kpi / tot_dur, 1) if tot_dur > 0 else float(df_sess["HSR_per_Min"].mean())
-        dsl_kpi = float(df_sess["Dynamic_Stress_Load"].sum())
+        avg_vmax = float(df_sess["Max_Speed"].mean())
         peak_vmax = float(df_sess["Max_Speed_Peak"].max()) if df_sess["Max_Speed_Peak"].max() > 0 else float(df_sess["Max_Speed"].max())
+        imp_kpi = float(df_sess["Heavy_Impacts"].sum())
         kpis_sess = [
             ("Drills & Tempo Totale", f"{len(df_sess)} Drills · {tot_dur:.1f}'", f"⏱️ {_fmt_mmss(tot_dur)} · ✅ ~{avg_act_p:.0f} att. · 🚫 {tot_exc_p} escl.", FIR_NAVY),
             ("Distanza & Work Rate", f"{dist_kpi:,.0f} m", f"⚡ WR Medio: {wr_sess_avg:.1f} m/min", FIR_AZZURO),
             ("Hml Pro-Capite (>25.5W)", f"{hml_kpi:,.0f} m", f"🔥 Intensità: {hml_min_avg:.1f} Hml/min", FIR_ORO),
             ("HSR (>18 Av / >20 Tq)", f"{hsr_kpi:,.0f} m", f"🏃 Intensità: {hsr_min_avg:.1f} HSR/min", FIR_AZZURO),
-            ("DSL & Picco Vmax", f"{dsl_kpi:,.1f}", f"🚀 Vmax Picco: {peak_vmax:.1f} km/h", FIR_NAVY),
+            ("Picco Vmax & Impatti", f"{peak_vmax:.1f} km/h", f"🚀 Med.: {avg_vmax:.1f} km/h · 💥 Imp.: {imp_kpi:.1f}", FIR_NAVY),
         ]
 
     k_cols = st.columns(5)
@@ -906,23 +905,23 @@ def _render_tab_sessione(
         fig_rates.add_trace(
             go.Scatter(
                 x=df_sess["Drill_Label"],
-                y=df_sess["DSL_per_Min"],
-                name="DSL/min",
+                y=df_sess["Work_Rate"],
+                name="Work Rate (m/min)",
                 mode="lines+markers+text",
-                line=dict(color=FIR_CRIMSON, width=2.5, dash="dot"),
-                marker=dict(size=8, color=FIR_CRIMSON),
-                text=[f"{v:.1f}" for v in df_sess["DSL_per_Min"]],
+                line=dict(color=FIR_AZZURO, width=2.5, dash="dot"),
+                marker=dict(size=8, color=FIR_AZZURO),
+                text=[f"{v:.1f}" for v in df_sess["Work_Rate"]],
                 textposition="top center",
-                textfont=dict(color=FIR_CRIMSON, size=10),
+                textfont=dict(color=FIR_AZZURO, size=10),
             ),
             secondary_y=True,
         )
         fig_rates.update_layout(barmode="group")
         fig_rates.update_yaxes(title_text="Hml/min & HSR/min (m/min)", secondary_y=False)
-        fig_rates.update_yaxes(title_text="DSL/min", secondary_y=True, showgrid=False)
+        fig_rates.update_yaxes(title_text="Work Rate (m/min)", secondary_y=True, showgrid=False)
         _apply_fir_plotly_layout(
             fig_rates,
-            f"Intensità Relativa al Tempo (Hml/min · HSR/min · DSL/min) — {sel_scope_sess}",
+            f"Intensità Relativa al Tempo (Hml/min · HSR/min · Work Rate) — {sel_scope_sess}",
             height=385,
         )
         st.plotly_chart(fig_rates, use_container_width=True)
@@ -936,7 +935,6 @@ def _render_tab_sessione(
             "Work_Rate": "Work Rate (m/min)",
             "HMPD_per_Min": "Hml/min (m/min)",
             "HSR_per_Min": "HSR/min (>18 Av / >20 Tq)",
-            "DSL_per_Min": "DSL/min",
         }
         sel_y_mat = st.selectbox(
             "Asse Y Mappa Operativa Drills (Durata × Intensità)",
@@ -1007,7 +1005,6 @@ def _render_tab_sessione(
             ("📏 Distanza (%)", "Total_Distance_Sum" if is_total_mode else "Total_Distance"),
             ("🔥 Hml (%)", "HMPD_Sum" if is_total_mode else "HMPD"),
             ("🏃 HSR (%)", "HSR_Sum" if is_total_mode else "HSR"),
-            ("⚙️ DSL (%)", "Dynamic_Stress_Load_Sum" if is_total_mode else "Dynamic_Stress_Load"),
         ]
         fig_share = go.Figure()
         cat_labels = [m[0] for m in share_metrics]
@@ -1049,9 +1046,9 @@ def _render_tab_sessione(
     )
     sec_modes = [
         "Hml (m) vs HSR (m) [>18 Av / >20 Tq]",
-        "Dynamic Stress Load vs Heavy Impacts",
         "Max Speed Media vs Picco (km/h)",
         "Accelerazioni vs Decelerazioni",
+        "Heavy Impacts tra Drills",
     ]
     if has_reparti and sel_scope_sess == "Intera Squadra (Attivi)":
         sec_modes.insert(1, "Avanti vs Trequarti tra i Drills")
@@ -1082,16 +1079,13 @@ def _render_tab_sessione(
             fig_sec.add_trace(go.Bar(x=df_sess["Drill_Label"], y=df_sess["Trequarti_Work_Rate"], name="Trequarti WR (m/min)", marker_color=FIR_ORO, text=[f"{v:.1f}" for v in df_sess["Trequarti_Work_Rate"]], textposition="outside"))
             _apply_fir_plotly_layout(fig_sec, "Work Rate tra Drills: Avanti vs Trequarti (m/min)", height=350)
         fig_sec.update_layout(barmode="group")
-    elif g_sec_mode == "Dynamic Stress Load vs Heavy Impacts":
-        c_dsl = "Dynamic_Stress_Load_Sum" if is_total_mode else "Dynamic_Stress_Load"
+    elif g_sec_mode == "Heavy Impacts tra Drills":
         c_imp = "Heavy_Impacts_Sum" if is_total_mode else "Heavy_Impacts"
-        tag_m = "Totale" if is_total_mode else "Pro-Capite"
-        fig_sec = make_subplots(specs=[[{"secondary_y": True}]])
-        fig_sec.add_trace(go.Bar(x=df_sess["Drill_Label"], y=df_sess[c_dsl], name=f"DSL ({tag_m})", marker_color=FIR_AZZURO, text=[f"{v:,.1f}" for v in df_sess[c_dsl]], textposition="outside"), secondary_y=False)
-        fig_sec.add_trace(go.Scatter(x=df_sess["Drill_Label"], y=df_sess[c_imp], name=f"Heavy Impacts ({tag_m})", mode="lines+markers+text", line=dict(color=FIR_CRIMSON, width=2.5), marker=dict(size=8), text=[f"{v:,.1f}" for v in df_sess[c_imp]], textposition="top center"), secondary_y=True)
-        fig_sec.update_yaxes(title_text=f"DSL ({tag_m})", secondary_y=False)
-        fig_sec.update_yaxes(title_text=f"Heavy Impacts ({tag_m})", secondary_y=True, showgrid=False)
-        _apply_fir_plotly_layout(fig_sec, f"Carico Meccanico tra Drills — DSL vs Heavy Impacts ({tag_m})", height=350)
+        tag_m = "Totali" if is_total_mode else "Pro-Capite"
+        fig_sec = go.Figure()
+        fig_sec.add_trace(go.Bar(x=df_sess["Drill_Label"], y=df_sess[c_imp], name=f"Heavy Impacts ({tag_m})", marker_color=FIR_CRIMSON, text=[f"{v:,.1f}" for v in df_sess[c_imp]], textposition="outside"))
+        _apply_fir_plotly_layout(fig_sec, f"Heavy Impacts tra Drills ({tag_m} · {sel_scope_sess})", height=350)
+        fig_sec.update_layout(showlegend=False)
     elif g_sec_mode == "Max Speed Media vs Picco (km/h)":
         fig_sec = go.Figure()
         fig_sec.add_trace(go.Bar(x=df_sess["Drill_Label"], y=df_sess["Max_Speed"], name="Max Speed Media", marker_color=FIR_AZZURO, text=[f"{v:.1f}" for v in df_sess["Max_Speed"]], textposition="outside"))
@@ -1125,7 +1119,7 @@ def _render_tab_sessione(
             "Drill_Order", "Drill_Name", "Active_Players_Count", "Excluded_Players_Count",
             "Duration_Min", "Durata_mmss", "Time_Share_%",
             "Total_Distance_Sum", "Work_Rate", "HMPD_Sum", "HMPD_per_Min",
-            "HSR_Sum", "HSR_per_Min", "Dynamic_Stress_Load_Sum", "Heavy_Impacts_Sum",
+            "HSR_Sum", "HSR_per_Min", "Heavy_Impacts_Sum",
             "Acc_Events_Sum", "Dec_Events_Sum",
         ]].rename(
             columns={
@@ -1142,7 +1136,6 @@ def _render_tab_sessione(
                 "HMPD_per_Min": "Hml/m",
                 "HSR_Sum": "HSR Tot (m)",
                 "HSR_per_Min": "HSR/m",
-                "Dynamic_Stress_Load_Sum": "DSL Tot",
                 "Heavy_Impacts_Sum": "Heavy Imp. Tot",
                 "Acc_Events_Sum": "Acc Tot",
                 "Dec_Events_Sum": "Dec Tot",
@@ -1154,7 +1147,7 @@ def _render_tab_sessione(
             "Duration_Min", "Durata_mmss", "Time_Share_%",
             "Total_Distance", "Work_Rate", "Delta_WR_%",
             "HMPD", "HMPD_per_Min", "HSR", "HSR_per_Min",
-            "Max_Speed", "Max_Speed_Peak", "Dynamic_Stress_Load", "DSL_per_Min", "Heavy_Impacts",
+            "Max_Speed", "Max_Speed_Peak", "Heavy_Impacts", "Acc_Events", "Dec_Events",
         ]].rename(
             columns={
                 "Drill_Order": "Ord.",
@@ -1173,9 +1166,9 @@ def _render_tab_sessione(
                 "HSR_per_Min": "HSR/m",
                 "Max_Speed": "Vmax Med.",
                 "Max_Speed_Peak": "Vmax Picco",
-                "Dynamic_Stress_Load": "DSL",
-                "DSL_per_Min": "DSL/m",
                 "Heavy_Impacts": "Heavy Imp.",
+                "Acc_Events": "Acc",
+                "Dec_Events": "Dec",
             }
         )
     st.dataframe(df_table, use_container_width=True, hide_index=True)
@@ -1235,7 +1228,14 @@ def _render_tab_sessione(
             )
 
     with act_c2:
-        csv_export_df = df_sess.drop(columns=["Drill_Label"], errors="ignore").rename(
+        csv_export_df = df_sess.drop(
+            columns=[
+                "Drill_Label", "Dynamic_Stress_Load", "DSL_per_Min",
+                "Dynamic_Stress_Load_Sum", "Avanti_DSL", "Trequarti_DSL",
+                "Avanti_DSL_Sum", "Trequarti_DSL_Sum",
+            ],
+            errors="ignore",
+        ).rename(
             columns={
                 "HMPD": "Hml_m",
                 "HMPD_per_Min": "Hml_per_Min",
@@ -1266,8 +1266,7 @@ def _render_tab_sessione(
                 df_roles_compact[[
                     "Role", "Department", "Attivi_Medi", "Esclusi_Totali",
                     "Total_Distance", "Total_Distance_Sum", "Work_Rate",
-                    "HMPD", "HMPD_Sum", "HSR", "HSR_Sum",
-                    "Dynamic_Stress_Load", "Dynamic_Stress_Load_Sum", "Max_Speed",
+                    "HMPD", "HMPD_Sum", "HSR", "HSR_Sum", "Max_Speed",
                 ]].rename(
                     columns={
                         "Role": "Ruolo",
@@ -1281,8 +1280,6 @@ def _render_tab_sessione(
                         "HMPD_Sum": "Hml Tot Ruolo (m)",
                         "HSR": "HSR Pro-Cap (m)",
                         "HSR_Sum": "HSR Tot Ruolo (m)",
-                        "Dynamic_Stress_Load": "DSL Pro-Cap",
-                        "Dynamic_Stress_Load_Sum": "DSL Tot Ruolo",
                         "Max_Speed": "Vmax Med.",
                     }
                 ),
@@ -1324,7 +1321,7 @@ def _render_tab_sessione(
                 df_ps_f[[
                     "Drill_Order", "Drill_Name", "Stato", "Player_Name", "Role", "Department",
                     "Duration_Min", "Total_Distance", "Work_Rate", "HMPD", "HSR",
-                    "Max_Speed", "Dynamic_Stress_Load", "Heavy_Impacts", "Exclusion_Reason",
+                    "Max_Speed", "Heavy_Impacts", "Acc_Events", "Dec_Events", "Exclusion_Reason",
                 ]].rename(
                     columns={
                         "Drill_Order": "Ord.",
@@ -1338,8 +1335,9 @@ def _render_tab_sessione(
                         "HMPD": "Hml (m)",
                         "HSR": "HSR (m)",
                         "Max_Speed": "Vmax",
-                        "Dynamic_Stress_Load": "DSL",
                         "Heavy_Impacts": "Impatti",
+                        "Acc_Events": "Acc",
+                        "Dec_Events": "Dec",
                         "Exclusion_Reason": "Motivo Esclusione",
                     }
                 ).sort_values(by=["Ord.", "Stato", "WR (m/m)"], ascending=[True, True, False]),
@@ -1508,15 +1506,14 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
 
     hml_col = "HMPD_Sum" if is_total_mode else "HMPD"
     hsr_col = "HSR_Sum" if is_total_mode else "HSR"
-    dsl_col = "Dynamic_Stress_Load_Sum" if is_total_mode else "Dynamic_Stress_Load"
     imp_col = "Heavy_Impacts_Sum" if is_total_mode else "Heavy_Impacts"
 
     kpis_bank = [
         ("Esecuzioni & Durata", f"{n_exec} sed. · {avg_dur_hist:.1f}'", f"⏱️ {_fmt_mmss(avg_dur_hist)} · ✅ ~{avg_act_hist:.1f} att. ({selected_scope})", FIR_NAVY),
         (metric_dict[primary_metric][:26], f"{p_mean_val:,.1f}", f"Ultima: {p_last_val:,.1f} ({delta_sign}{delta_p_pct:.1f}%)", FIR_AZZURO),
         ("Hml Medio" + (" (Tot.)" if is_total_mode else " (Pro-Cap.)"), f"{df_d[hml_col].mean():,.0f} m", f"🔥 {df_d['HMPD_per_Min'].mean():.1f} Hml/min", FIR_ORO),
-        ("HSR (>18 Av / >20 Tq)", f"{df_d[hsr_col].mean():,.0f} m", f"🏃 {df_d['HSR_per_Min'].mean():.1f} HSR/min · Vmax {df_d['Max_Speed_Peak'].max():.1f}", FIR_AZZURO),
-        ("DSL Medio" + (" (Tot.)" if is_total_mode else " (Pro-Cap.)"), f"{df_d[dsl_col].mean():,.1f}", f"💥 Heavy Imp.: {df_d[imp_col].mean():,.1f}", FIR_NAVY),
+        ("HSR (>18 Av / >20 Tq)", f"{df_d[hsr_col].mean():,.0f} m", f"🏃 {df_d['HSR_per_Min'].mean():.1f} HSR/min", FIR_AZZURO),
+        ("Vmax Picco & Impatti", f"{df_d['Max_Speed_Peak'].max():.1f} km/h", f"🚀 Med.: {df_d['Max_Speed'].mean():.1f} · 💥 Imp.: {df_d[imp_col].mean():,.1f}", FIR_NAVY),
     ]
     kb_cols = st.columns(5)
     for col_w, (kl, kv, ks, ka) in zip(kb_cols, kpis_bank):
@@ -1618,7 +1615,7 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
         df_hist_view[[
             "Session_Date", "Session_Name", "Drill_Order", "Active_Players_Count", "Excluded_Players_Count",
             "Duration_Min", "Total_Distance", "Total_Distance_Sum", "Work_Rate", "Delta_WR_%",
-            "HMPD", "HMPD_per_Min", "HSR", "HSR_per_Min", "Dynamic_Stress_Load", "Heavy_Impacts",
+            "HMPD", "HMPD_per_Min", "HSR", "HSR_per_Min", "Max_Speed", "Heavy_Impacts",
         ]].rename(
             columns={
                 "Session_Date": "Data",
@@ -1635,7 +1632,7 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                 "HMPD_per_Min": "Hml/m",
                 "HSR": "HSR (m)",
                 "HSR_per_Min": "HSR/m",
-                "Dynamic_Stress_Load": "DSL",
+                "Max_Speed": "Vmax Med.",
                 "Heavy_Impacts": "Heavy Imp.",
             }
         ),
@@ -1710,10 +1707,10 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
         with m_c1:
             radar_axes = [
                 ("Durata (min)", "Durata_Media"),
+                ("Dist. (m)", "Dist_ProCapite"),
                 ("Work Rate", "Work_Rate_Medio"),
                 ("Hml/min", "Hml_per_Min"),
                 ("HSR/min", "HSR_per_Min"),
-                ("DSL/min", "DSL_per_Min"),
                 ("Vmax Media", "Max_Speed"),
             ]
             max_per_axis = {col: max(float(comp_df[col].max()), 1e-6) for _, col in radar_axes}
@@ -1752,12 +1749,11 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
         with m_c2:
             mat_y_choice = st.selectbox(
                 "Asse Y Mappa Multi-Drill (Durata × Intensità)",
-                options=["Work_Rate_Medio", "Hml_per_Min", "HSR_per_Min", "DSL_per_Min"],
+                options=["Work_Rate_Medio", "Hml_per_Min", "HSR_per_Min"],
                 format_func=lambda k: {
                     "Work_Rate_Medio": "Work Rate Medio (m/min)",
                     "Hml_per_Min": "Hml/min (m/min)",
                     "HSR_per_Min": "HSR/min (>18 Av / >20 Tq)",
-                    "DSL_per_Min": "DSL/min",
                 }[k],
                 key="drill_bank_matrix_y",
             )
@@ -1802,7 +1798,6 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                 "Dist_Totale_Medio": "Distanza Totale Media Gruppo/Ruolo (m)",
                 "Hml_Totale_Medio": "Hml Totale Medio Gruppo/Ruolo (m)",
                 "HSR_Totale_Medio": "HSR Totale Medio (>18/>20) (m)",
-                "DSL_Totale_Medio": "DSL Totale Medio Gruppo/Ruolo",
                 "Work_Rate_Medio": "Work Rate Pro-Capite (m/min)",
                 "Durata_Media": "Durata Media (min)",
             }
@@ -1814,9 +1809,8 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                 "Dist_ProCapite": "Distanza Pro-Capite (m)",
                 "Hml_ProCapite": "Hml Pro-Capite (m)",
                 "HSR_ProCapite": "HSR Pro-Capite (>18 Av / >20 Tq) (m)",
-                "DSL_ProCapite": "DSL Pro-Capite",
-                "DSL_per_Min": "DSL/min Pro-Capite",
                 "Durata_Media": "Durata Media (min)",
+                "Max_Speed": "Max Speed Media (km/h)",
             }
         )
         comp_metric = st.selectbox(
@@ -1873,7 +1867,7 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                     "Hml/min": _fmt_delta(float(r["Hml_per_Min"]), float(br["Hml_per_Min"]), "", 1),
                     "HSR (>18/>20)": _fmt_delta(float(r["HSR_ProCapite"]), float(br["HSR_ProCapite"]), "m", 0),
                     "HSR/min": _fmt_delta(float(r["HSR_per_Min"]), float(br["HSR_per_Min"]), "", 1),
-                    "DSL": _fmt_delta(float(r["DSL_ProCapite"]), float(br["DSL_ProCapite"]), "", 0),
+                    "Vmax Med.": _fmt_delta(float(r["Max_Speed"]), float(br["Max_Speed"]), "", 1),
                 })
             df_diff_table = pd.DataFrame(diff_rows)
             st.markdown(
@@ -1892,7 +1886,7 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
     df_cat_disp = bank_summary[[
         "Drill_Name", "Esecuzioni", "Ultima_Data", "Attivi_Medi", "Durata_Media",
         "Dist_ProCapite", "Work_Rate_Medio", "Hml_ProCapite", "Hml_per_Min",
-        "HSR_ProCapite", "HSR_per_Min", "DSL_ProCapite", "DSL_per_Min", "Max_Speed",
+        "HSR_ProCapite", "HSR_per_Min", "Max_Speed", "Max_Speed_Peak", "Heavy_Imp_ProCapite",
     ]].rename(
         columns={
             "Drill_Name": "Drill",
@@ -1906,9 +1900,9 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
             "Hml_per_Min": "Hml/m",
             "HSR_ProCapite": "HSR (m)",
             "HSR_per_Min": "HSR/m",
-            "DSL_ProCapite": "DSL",
-            "DSL_per_Min": "DSL/m",
             "Max_Speed": "Vmax Med.",
+            "Max_Speed_Peak": "Vmax Picco",
+            "Heavy_Imp_ProCapite": "Impatti",
         }
     )
     st.dataframe(df_cat_disp, use_container_width=True, hide_index=True)
@@ -1958,7 +1952,14 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
             )
 
     with b_act2:
-        csv_drill = df_d.drop(columns=["Exec_Label"], errors="ignore").rename(
+        csv_drill = df_d.drop(
+            columns=[
+                "Exec_Label", "Dynamic_Stress_Load", "DSL_per_Min",
+                "Dynamic_Stress_Load_Sum", "Avanti_DSL", "Trequarti_DSL",
+                "Avanti_DSL_Sum", "Trequarti_DSL_Sum",
+            ],
+            errors="ignore",
+        ).rename(
             columns={"HMPD": "Hml_m", "HMPD_per_Min": "Hml_per_Min", "HMPD_Sum": "Hml_Sum_m"}
         ).to_csv(index=False).encode("utf-8-sig")
         st.download_button(
