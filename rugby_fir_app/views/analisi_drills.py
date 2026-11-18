@@ -1996,13 +1996,15 @@ def render_analisi_drills(t=None):
     df_roles = drills_manager.load_drills_roles_summary()
     df_players = drills_manager.load_drills_players_detail()
 
-    tabs = [
-        "📂 Gestione & Confronto Drills Seduta",
-        "🔍 Drill Bank & Arena Multi-Drill",
-    ]
-    active_tab = render_tab_navigation(tabs, key_prefix="analisi_drills_tabs")
+    active_tab = render_tab_navigation(
+        "analisi_drills_tabs",
+        [
+            ("sessione", "📂 Gestione & Confronto Drills Seduta", "bi-layers-fill"),
+            ("drill_bank", "🔍 Drill Bank & Arena Multi-Drill", "bi-database-fill-gear"),
+        ],
+    )
 
-    if active_tab == tabs[0]:
+    if active_tab == "sessione":
         _render_tab_sessione(df_master, df_roles, df_players, is_admin=is_admin)
     else:
         _render_tab_drill_bank(df_master, df_roles)
