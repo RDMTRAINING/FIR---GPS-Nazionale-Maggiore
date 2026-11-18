@@ -46,6 +46,7 @@ DRILLS_MASTER_COLUMNS: List[str] = [
     "Excluded_Players_Count",
     "Raw_Players_Count",
     "Duration_Min",
+    "Duration_Min_Sum",
     # Medie Normalizzate Pro-Capite (Carico Totale Attivi / Active_Players_Count)
     "Total_Distance",
     "Work_Rate",
@@ -58,6 +59,7 @@ DRILLS_MASTER_COLUMNS: List[str] = [
     "Max_Speed_Peak",
     "Max_Speed_Pct",
     "Dynamic_Stress_Load",
+    "DSL_per_Min",
     "Heavy_Impacts",
     "Acc_Events",
     "Dec_Events",
@@ -107,6 +109,7 @@ DRILLS_ROLES_COLUMNS: List[str] = [
     "Active_Players_Count",
     "Excluded_Players_Count",
     "Duration_Min",
+    "Duration_Min_Sum",
     # Media Normalizzata Pro-Capite del Ruolo (Carico Totale Ruolo / Active_Players_Count)
     "Total_Distance",
     "Work_Rate",
@@ -118,6 +121,7 @@ DRILLS_ROLES_COLUMNS: List[str] = [
     "Max_Speed",
     "Max_Speed_Peak",
     "Dynamic_Stress_Load",
+    "DSL_per_Min",
     "Heavy_Impacts",
     "Acc_Events",
     "Dec_Events",
@@ -184,13 +188,21 @@ DRILL_COL_ALIASES: Dict[str, List[str]] = {
         "m/min", "m\\min", "metri/min", "avg speed (km/h)",
     ],
     "hmpd": [
-        "hmpd", "hmpd (m)", "hmld (m)", "hmld", "distance/met power z3+ (m)",
+        "hml (m)", "hml", "hmld (m)", "hmld", "hmpd", "hmpd (m)", "distance/met power z3+ (m)",
         "distance > 25,5w (m)", "distance > 25.5w (m)", "hml >25w",
         "mp 25,5 - 35 w (m)", "mp 25.5-35 w",
     ],
+    "hsr_18": [
+        "distance/speed z3+ (m)", "hsrm (>18km/hr) (m)", "hsr >18", "hsr>18",
+        "hsr 18+", "hsr (>18 km/h)",
+    ],
+    "hsr_20": [
+        "distance/speed z4+ (m)", "hsrm (>20km/h)", "hsr >20", "hsr>20",
+        "hsr 20+", "hsr (>20 km/h)", "hsr (m)", "hsr",
+    ],
     "hsr": [
-        "hsr", "hsr (m)", "hsrm (>18km/hr) (m)", "hsrm (>20km/h)",
-        "distance/speed z4+ (m)", "hsr >18", "hsr>20",
+        "hsr", "hsr (m)", "distance/speed z4+ (m)", "hsrm (>20km/h)",
+        "distance/speed z3+ (m)", "hsrm (>18km/hr) (m)", "hsr >18", "hsr>20",
         "velocità 20-25 km\\h (m)", "velocita 20-25 km/h (m)",
     ],
     "vhsr": [
@@ -523,16 +535,18 @@ def _compute_role_summaries(work_df: pd.DataFrame) -> List[Dict[str, Any]]:
             s = pd.to_numeric(act[c], errors="coerce").dropna()
             return round(float(s.max()), 2) if not s.empty else 0.0
 
-        dur_avg = _norm_avg("Duration_Min")
+        dur_sum = _sum("Duration_Min")
+        dur_avg = round(dur_sum / n_act, 2)
         dist_sum = _sum("Total_Distance")
         dist_avg = round(dist_sum / n_act, 2)
-        wr_avg = round(dist_avg / dur_avg, 2) if dur_avg > 0 and dist_avg > 0 else _norm_avg("Work_Rate")
+        wr_avg = round(dist_sum / dur_sum, 2) if dur_sum > 0 and dist_sum > 0 else _norm_avg("Work_Rate")
         hmpd_sum = _sum("HMPD")
         hmpd_avg = round(hmpd_sum / n_act, 2)
         hsr_sum = _sum("HSR")
         hsr_avg = round(hsr_sum / n_act, 2)
         vhsr_sum = _sum("VHSR")
         dsl_sum = _sum("Dynamic_Stress_Load")
+        dsl_avg = round(dsl_sum / n_act, 2)
         imp_sum = _sum("Heavy_Impacts")
         acc_sum = _sum("Acc_Events")
         dec_sum = _sum("Dec_Events")
@@ -543,16 +557,18 @@ def _compute_role_summaries(work_df: pd.DataFrame) -> List[Dict[str, Any]]:
             "Active_Players_Count": n_act,
             "Excluded_Players_Count": n_exc,
             "Duration_Min": dur_avg,
+            "Duration_Min_Sum": dur_sum,
             "Total_Distance": dist_avg,
             "Work_Rate": wr_avg,
             "HMPD": hmpd_avg,
-            "HMPD_per_Min": round(hmpd_avg / dur_avg, 2) if dur_avg > 0 else 0.0,
+            "HMPD_per_Min": round(hmpd_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
             "HSR": hsr_avg,
-            "HSR_per_Min": round(hsr_avg / dur_avg, 2) if dur_avg > 0 else 0.0,
+            "HSR_per_Min": round(hsr_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
             "VHSR": round(vhsr_sum / n_act, 2),
             "Max_Speed": _norm_avg("Max_Speed"),
             "Max_Speed_Peak": _max("Max_Speed"),
-            "Dynamic_Stress_Load": round(dsl_sum / n_act, 2),
+            "Dynamic_Stress_Load": dsl_avg,
+            "DSL_per_Min": round(dsl_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
             "Heavy_Impacts": round(imp_sum / n_act, 2),
             "Acc_Events": round(acc_sum / n_act, 2),
             "Dec_Events": round(dec_sum / n_act, 2),
@@ -620,7 +636,9 @@ def _parse_drill_dataframe(
     c_dist = _find_col(cols, "total_distance")
     c_wr = _find_col(cols, "work_rate")
     c_hmpd = _find_col(cols, "hmpd")
-    c_hsr = _find_col(cols, "hsr")
+    c_hsr_18 = _find_col(cols, "hsr_18", df=df, require_numeric=True)
+    c_hsr_20 = _find_col(cols, "hsr_20", df=df, require_numeric=True)
+    c_hsr = _find_col(cols, "hsr", df=df, require_numeric=True)
     c_vhsr = _find_col(cols, "vhsr")
     c_vmax = _find_col(cols, "max_speed", df=df, require_numeric=True)
     c_vpct = _find_col(cols, "max_speed_pct", df=df, require_numeric=True)
@@ -698,19 +716,46 @@ def _parse_drill_dataframe(
         work_df.loc[missing_dur, "Total_Distance"] / work_df.loc[missing_dur, "Work_Rate"]
     )
 
-    # HMPD
+    # Hml (>25.5W, colonna interna 'HMPD' per retro-compatibilità Parquet)
     if c_hmpd:
         work_df["HMPD"] = _parse_numeric_series(df[c_hmpd])
     else:
         mp_cols = [c for c in cols if any(k in _norm_col(c) for k in ("met power z3 (m)", "met power z4 (m)", "met power z5 (m)"))]
         work_df["HMPD"] = sum(_parse_numeric_series(df[c]).fillna(0.0) for c in mp_cols) if mp_cols else 0.0
 
-    # HSR
-    if c_hsr:
-        work_df["HSR"] = _parse_numeric_series(df[c_hsr])
+    # HSR differenziato FIR: Avanti >18 km/h (Z3+ / hsrm >18), Trequarti >20 km/h (Z4+ / hsrm >20)
+    if c_hsr_18:
+        hsr_18_s = _parse_numeric_series(df[c_hsr_18]).fillna(0.0)
     else:
-        sp_cols = [c for c in cols if any(k in _norm_col(c) for k in ("speed z4 (m)", "speed z5 (m)", "speed z6 (m)"))]
-        work_df["HSR"] = sum(_parse_numeric_series(df[c]).fillna(0.0) for c in sp_cols) if sp_cols else 0.0
+        sp18_cols = [
+            c for c in cols
+            if any(k in _norm_col(c) for k in ("speed z3 (m)", "speed z4 (m)", "speed z5 (m)", "speed z6 (m)", "18-20", "20-25", "25-72"))
+            and "time/" not in _norm_col(c)
+            and "%" not in _norm_col(c)
+        ]
+        hsr_18_s = sum(_parse_numeric_series(df[c]).fillna(0.0) for c in sp18_cols) if sp18_cols else None
+
+    if c_hsr_20:
+        hsr_20_s = _parse_numeric_series(df[c_hsr_20]).fillna(0.0)
+    else:
+        sp20_cols = [
+            c for c in cols
+            if any(k in _norm_col(c) for k in ("speed z4 (m)", "speed z5 (m)", "speed z6 (m)", "20-25", "25-72"))
+            and "time/" not in _norm_col(c)
+            and "%" not in _norm_col(c)
+        ]
+        hsr_20_s = sum(_parse_numeric_series(df[c]).fillna(0.0) for c in sp20_cols) if sp20_cols else None
+
+    if hsr_18_s is not None and hsr_20_s is not None:
+        work_df["HSR"] = np.where(work_df["Department"] == "Avanti", hsr_18_s, hsr_20_s)
+    elif hsr_20_s is not None:
+        work_df["HSR"] = hsr_20_s
+    elif hsr_18_s is not None:
+        work_df["HSR"] = hsr_18_s
+    elif c_hsr:
+        work_df["HSR"] = _parse_numeric_series(df[c_hsr]).fillna(0.0)
+    else:
+        work_df["HSR"] = 0.0
 
     # VHSR
     if c_vhsr:
@@ -760,16 +805,18 @@ def _parse_drill_dataframe(
         s = pd.to_numeric(active_df[col_name], errors="coerce").dropna()
         return round(float(s.max()), 2) if not s.empty else 0.0
 
-    dur_avg = _act_norm_avg("Duration_Min")
+    dur_sum = _act_sum("Duration_Min")
+    dur_avg = round(dur_sum / n_active, 2) if n_active > 0 else 0.0
     dist_sum = _act_sum("Total_Distance")
     dist_avg = round(dist_sum / n_active, 2) if n_active > 0 else 0.0
-    wr_avg = round(dist_avg / dur_avg, 2) if dur_avg > 0 and dist_avg > 0 else _act_norm_avg("Work_Rate")
+    wr_avg = round(dist_sum / dur_sum, 2) if dur_sum > 0 and dist_sum > 0 else _act_norm_avg("Work_Rate")
     hmpd_sum = _act_sum("HMPD")
     hmpd_avg = round(hmpd_sum / n_active, 2) if n_active > 0 else 0.0
     hsr_sum = _act_sum("HSR")
     hsr_avg = round(hsr_sum / n_active, 2) if n_active > 0 else 0.0
     vhsr_sum = _act_sum("VHSR")
     dsl_sum = _act_sum("Dynamic_Stress_Load")
+    dsl_avg = round(dsl_sum / n_active, 2) if n_active > 0 else 0.0
     imp_sum = _act_sum("Heavy_Impacts")
     acc_sum = _act_sum("Acc_Events")
     dec_sum = _act_sum("Dec_Events")
@@ -807,18 +854,20 @@ def _parse_drill_dataframe(
         "Excluded_Players_Count": n_excluded,
         "Raw_Players_Count": n_raw,
         "Duration_Min": dur_avg,
+        "Duration_Min_Sum": dur_sum,
         # Medie Normalizzate Pro-Capite (Atleti Attivi)
         "Total_Distance": dist_avg,
         "Work_Rate": wr_avg,
         "HMPD": hmpd_avg,
-        "HMPD_per_Min": round(hmpd_avg / dur_avg, 2) if dur_avg > 0 else 0.0,
+        "HMPD_per_Min": round(hmpd_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
         "HSR": hsr_avg,
-        "HSR_per_Min": round(hsr_avg / dur_avg, 2) if dur_avg > 0 else 0.0,
+        "HSR_per_Min": round(hsr_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
         "VHSR": round(vhsr_sum / n_active, 2) if n_active > 0 else 0.0,
         "Max_Speed": _act_norm_avg("Max_Speed"),
         "Max_Speed_Peak": _act_max("Max_Speed"),
         "Max_Speed_Pct": _act_norm_avg("Max_Speed_Pct"),
-        "Dynamic_Stress_Load": round(dsl_sum / n_active, 2) if n_active > 0 else 0.0,
+        "Dynamic_Stress_Load": dsl_avg,
+        "DSL_per_Min": round(dsl_sum / dur_sum, 2) if dur_sum > 0 else 0.0,
         "Heavy_Impacts": round(imp_sum / n_active, 2) if n_active > 0 else 0.0,
         "Acc_Events": round(acc_sum / n_active, 2) if n_active > 0 else 0.0,
         "Dec_Events": round(dec_sum / n_active, 2) if n_active > 0 else 0.0,
@@ -1073,6 +1122,9 @@ def _load_drills_master_uncached() -> pd.DataFrame:
                 df[col] = df["Players_Count"]
             elif col == "Raw_Players_Count" and "Players_Count" in df.columns:
                 df[col] = df["Players_Count"]
+            elif col == "DSL_per_Min" and "Dynamic_Stress_Load" in df.columns and "Duration_Min" in df.columns:
+                dur_s = pd.to_numeric(df["Duration_Min"], errors="coerce").replace(0, np.nan)
+                df[col] = (pd.to_numeric(df["Dynamic_Stress_Load"], errors="coerce").fillna(0.0) / dur_s).fillna(0.0).round(2)
             elif col.endswith("_Sum") and col[:-4] in df.columns and "Players_Count" in df.columns:
                 df[col] = (pd.to_numeric(df[col[:-4]], errors="coerce").fillna(0.0) * pd.to_numeric(df["Players_Count"], errors="coerce").fillna(1.0)).round(2)
             else:
@@ -1096,7 +1148,13 @@ def _load_drills_roles_uncached() -> pd.DataFrame:
     str_cols = {"Session_Date", "Session_Name", "Drill_Name", "Role", "Department"}
     for col in DRILLS_ROLES_COLUMNS:
         if col not in df.columns:
-            df[col] = "" if col in str_cols else 0.0
+            if col == "Duration_Min_Sum" and "Duration_Min" in df.columns and "Active_Players_Count" in df.columns:
+                df[col] = (pd.to_numeric(df["Duration_Min"], errors="coerce").fillna(0.0) * pd.to_numeric(df["Active_Players_Count"], errors="coerce").fillna(1.0)).round(2)
+            elif col == "DSL_per_Min" and "Dynamic_Stress_Load" in df.columns and "Duration_Min" in df.columns:
+                dur_s = pd.to_numeric(df["Duration_Min"], errors="coerce").replace(0, np.nan)
+                df[col] = (pd.to_numeric(df["Dynamic_Stress_Load"], errors="coerce").fillna(0.0) / dur_s).fillna(0.0).round(2)
+            else:
+                df[col] = "" if col in str_cols else 0.0
     df["Session_Date"] = df["Session_Date"].astype(str).str.slice(0, 10)
     df["Session_Name"] = df["Session_Name"].astype(str).str.strip()
     df["Drill_Name"] = df["Drill_Name"].astype(str).str.strip()
