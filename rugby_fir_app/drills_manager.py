@@ -233,6 +233,7 @@ DRILL_COL_ALIASES: Dict[str, List[str]] = {
 # Righe di riepilogo esportate talvolta da GPExe nella colonna athlete (da non contare come atleti)
 SUMMARY_ROW_LABELS = {
     "nan", "none", "average", "media", "total", "totale", "team", "squadra", "squad",
+    "unassigned role", "unassigned", "all", "overall", "summary", "riepilogo",
     "pilone", "piloni", "tallonatore", "tallonatori", "2 l", "3 l", "seconda linea",
     "terza linea", "9", "10", "centro", "centri", "ala-estremo", "ala", "estremo",
     "avanti", "trequarti", "forwards", "backs",
@@ -251,8 +252,18 @@ CANONICAL_ROLE_ORDER: List[str] = [
 ]
 
 
-def _norm_col(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name or "").replace("\ufeff", "").strip().lower())
+def _safe_str(val: Any) -> str:
+    """Converte in stringa sicura gestendo None e float NaN senza mai sollevare AttributeError."""
+    if val is None:
+        return ""
+    if isinstance(val, (float, np.floating)) and np.isnan(val):
+        return ""
+    s = str(val).strip()
+    return "" if s.lower() in ("nan", "none") else s
+
+
+def _norm_col(name: Any) -> str:
+    return re.sub(r"\s+", " ", _safe_str(name).replace("\ufeff", "").strip().lower())
 
 
 def normalize_role_and_department(role_val: Any) -> Tuple[str, str]:
@@ -260,8 +271,9 @@ def normalize_role_and_department(role_val: Any) -> Tuple[str, str]:
     Normalizza i codici ruolo FIR/GPExe/Catapult (es. 'pilone', '2 l', '3 l', '9', '10',
     'centro', 'ala-estremo', 'tallonatore') in (Ruolo Canonico, Reparto).
     """
-    s = re.sub(r"\s+", " ", str(role_val or "").strip().lower())
-    if not s or s in ("nan", "none", "-", "n/d", "n/a"):
+    raw_clean = _safe_str(role_val)
+    s = re.sub(r"\s+", " ", raw_clean.lower())
+    if not s or s in ("nan", "none", "-", "n/d", "n/a", "unassigned", "unassigned role"):
         return "Altro / N.D.", "N/D"
 
     # Avanti
@@ -384,7 +396,7 @@ def suggest_drill_name_from_file(filename: str, df_raw: Optional[pd.DataFrame] =
 
 
 def _read_uploaded_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    ext = os.path.splitext(filename.lower())[1]
+    ext = os.path.splitext(_safe_str(filename).lower())[1]
     if ext in (".xlsx", ".xls"):
         return pd.read_excel(io.BytesIO(file_bytes))
 
@@ -560,30 +572,50 @@ def _compute_role_summaries(work_df: pd.DataFrame) -> List[Dict[str, Any]]:
     return role_rows
 
 
-def parse_drill_file(
-    file_bytes: bytes,
+def _extract_date_from_df(df: pd.DataFrame) -> str:
+    """Estrae una data YYYY-MM-DD dalla colonna 'start date/time' o 'date' del CSV se presente."""
+    norm_map = {_norm_col(c): c for c in df.columns}
+    for key in ("start date/time", "start time", "date", "data", "session date", "session_date"):
+        if key in norm_map:
+            col = norm_map[key]
+            vals = df[col].dropna()
+            for v in vals.head(10):
+                s = _safe_str(v)
+                m = re.search(r"(\d{4}-\d{2}-\d{2})", s)
+                if m:
+                    return m.group(1)
+                m2 = re.search(r"(\d{2})/(\d{2})/(\d{4})", s)
+                if m2:
+                    return f"{m2.group(3)}-{m2.group(2)}-{m2.group(1)}"
+    return ""
+
+
+def _parse_drill_dataframe(
+    df: pd.DataFrame,
     filename: str,
     roster_role_map: Optional[Dict[str, Tuple[str, str]]] = None,
     min_dist_m: float = DEFAULT_MIN_DIST_M,
     min_wr_mpm: float = DEFAULT_MIN_WR_MPM,
     min_rel_dist_pct: float = DEFAULT_MIN_REL_DIST_PCT,
+    forced_drill_name: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]], str]:
     """
-    Analizza un file CSV/Excel di un singolo drill e restituisce:
-      1. `summary_rec`: Dizionario aggregato del drill (solo atleti attivi: Somme Totali + Medie Normalizzate)
-      2. `player_records`: Lista per-atleta completa di `Is_Active` e `Exclusion_Reason`
-      3. `role_records`: Lista aggregata per singolo ruolo (Carico Totale Ruolo + Media Pro-Capite Normalizzata)
-      4. `suggested_name`: Nome suggerito del drill
+    Core parser su un singolo DataFrame (singolo blocco/drill):
+      - Rimuove righe di riepilogo GPExe/ruolo (es. 'unassigned role', 'pilone', 'Team', righe con role & starter vuoti)
+      - Esegue rilevamento automatico giocatori attivi vs panchina/rotazione
+      - Calcola Somme Totali del gruppo attivo + Medie Normalizzate pro-capite + Breakdown per Ruolo.
     """
-    df = _read_uploaded_dataframe(file_bytes, filename)
-    if df.empty:
-        raise ValueError(f"Il file '{filename}' risulta vuoto o non leggibile.")
+    if df is None or df.empty:
+        raise ValueError(f"Blocco drill vuoto nel file '{filename}'.")
 
+    df = df.copy()
     cols = list(df.columns)
-    suggested_name = suggest_drill_name_from_file(filename, df)
+    norm_col_map = {_norm_col(c): c for c in cols}
+    suggested_name = _safe_str(forced_drill_name) or suggest_drill_name_from_file(filename, df)
 
     c_player = _find_col(cols, "player_name")
     c_role = _find_col(cols, "role")
+    c_starter = norm_col_map.get("starter")
     c_dur = _find_col(cols, "duration")
     c_dist = _find_col(cols, "total_distance")
     c_wr = _find_col(cols, "work_rate")
@@ -601,23 +633,32 @@ def parse_drill_file(
 
     work_df = pd.DataFrame(index=df.index)
     work_df["Player_Name"] = (
-        df[c_player].astype(str).str.strip() if c_player else [f"Riga {i+1}" for i in range(len(df))]
+        df[c_player].apply(_safe_str) if c_player else [f"Riga {i+1}" for i in range(len(df))]
     )
 
-    # Filtra righe vuote o righe di riepilogo/ruolo (es. 'pilone', 'average', 'total')
+    # 1. Filtra righe vuote o righe di riepilogo/ruolo (es. 'unassigned role', 'pilone', 'average', 'Team')
     if c_player:
         mask_valid = (
             work_df["Player_Name"].str.len() > 0
         ) & (
             ~work_df["Player_Name"].str.strip().str.lower().isin(SUMMARY_ROW_LABELS)
         )
+
+        # 2. Filtro strutturale GPExe: nei file GPExe le righe riepilogo di ruolo/squadra in fondo al blocco
+        #    hanno sia `role` sia `starter` vuoti/NaN, mentre tutti gli atleti reali hanno almeno uno dei due valorizzato.
+        if c_role and c_starter:
+            has_role = df[c_role].apply(lambda x: len(_safe_str(x)) > 0)
+            has_starter = df[c_starter].apply(lambda x: len(_safe_str(x)) > 0)
+            if bool((has_role | has_starter).any()):
+                mask_valid = mask_valid & (has_role | has_starter)
+
         df = df.loc[mask_valid].copy()
         work_df = work_df.loc[mask_valid].copy()
 
     if df.empty:
         raise ValueError(f"Nessuna riga atleta valida trovata nel file '{filename}'.")
 
-    raw_roles = df[c_role].astype(str).str.strip() if c_role else pd.Series([""] * len(df), index=df.index)
+    raw_roles = df[c_role].apply(_safe_str) if c_role else pd.Series([""] * len(df), index=df.index)
 
     roles_clean: List[str] = []
     depts: List[str] = []
@@ -629,7 +670,7 @@ def parse_drill_file(
                 r_ros, d_ros = roster_role_map[p_key]
                 canon_role, dept = normalize_role_and_department(r_ros)
                 if dept == "N/D" and d_ros:
-                    dept = d_ros
+                    dept = _safe_str(d_ros) or "N/D"
         roles_clean.append(canon_role)
         depts.append(dept)
     work_df["Role"] = roles_clean
@@ -846,6 +887,167 @@ def parse_drill_file(
             })
 
     return summary_rec, player_records, role_records, suggested_name
+
+
+def parse_drill_file_multi(
+    file_bytes: bytes,
+    filename: str,
+    roster_role_map: Optional[Dict[str, Tuple[str, str]]] = None,
+    min_dist_m: float = DEFAULT_MIN_DIST_M,
+    min_wr_mpm: float = DEFAULT_MIN_WR_MPM,
+    min_rel_dist_pct: float = DEFAULT_MIN_REL_DIST_PCT,
+) -> Tuple[List[Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]], str]], Dict[str, Any]]:
+    """
+    Parser intelligente single-drill & multi-drill (GPExe / Catapult / CSV generici).
+    - Se il CSV è un export multi-blocco GPExe con colonna `type` ('S' = totale seduta, 'D' = singoli drills):
+      esclude automaticamente il riepilogo `type == 'S'` (evitando doppi conteggi) e separa automaticamente
+      ciascun drill (`type == 'D'`) in ordine cronologico (es. 'collettivo 1', 'collettivo 2', 'collettivo 3').
+    - Se il CSV contiene più blocchi/periodi distinti (es. colonna `notes`, `Period Name`, `Drill Name`):
+      li separa automaticamente in drills individuali.
+    - Se il CSV è un singolo drill: restituisce una lista di 1 elemento.
+    """
+    df_raw = _read_uploaded_dataframe(file_bytes, filename)
+    if df_raw.empty:
+        raise ValueError(f"Il file '{filename}' risulta vuoto o non leggibile.")
+
+    cols = list(df_raw.columns)
+    norm_map = {_norm_col(c): c for c in cols}
+    detected_date = _extract_date_from_df(df_raw)
+
+    file_meta: Dict[str, Any] = {
+        "is_multi_drill": False,
+        "skipped_session_summary": False,
+        "skipped_session_label": "",
+        "detected_session_date": detected_date,
+        "detected_drill_names": [],
+    }
+
+    df_work = df_raw.copy()
+
+    # 1. Rilevamento GPExe `type` ('S' = Sessione intera, 'D' = Drill)
+    c_type = norm_map.get("type") or norm_map.get("record type") or norm_map.get("row type")
+    has_type_d = False
+    if c_type:
+        t_vals = df_work[c_type].apply(lambda x: _safe_str(x).upper())
+        if bool((t_vals == "D").any()):
+            has_type_d = True
+            if bool((t_vals == "S").any()):
+                file_meta["skipped_session_summary"] = True
+                s_df = df_work.loc[t_vals == "S"]
+                c_hint_s = _find_col(cols, "drill_hint")
+                if c_hint_s:
+                    s_labels = [_safe_str(v) for v in s_df[c_hint_s].tolist() if _safe_str(v)]
+                    if s_labels:
+                        file_meta["skipped_session_label"] = s_labels[0]
+            df_work = df_work.loc[t_vals == "D"].copy()
+
+    # 2. Rilevamento blocchi multipli (per colonna drill/period/notes + start date/time)
+    c_split = None
+    for cand in ("drill_name", "drill name", "drill", "period name", "period", "split", "blocco", "notes"):
+        if cand in norm_map:
+            non_empty = [v for v in df_work[norm_map[cand]].apply(_safe_str).tolist() if v and v.lower() not in ("unit", "exercise")]
+            if non_empty:
+                c_split = norm_map[cand]
+                break
+
+    c_start = norm_map.get("start date/time") or norm_map.get("start time")
+
+    drill_slices: List[Tuple[str, pd.DataFrame]] = []
+    if c_split is not None:
+        split_labels = df_work[c_split].apply(_safe_str)
+        start_labels = df_work[c_start].apply(_safe_str) if c_start else pd.Series([""] * len(df_work), index=df_work.index)
+
+        # Chiave di blocco = (label, start_time) preservando ordine di comparsa o ordine cronologico
+        block_keys_in_order: List[Tuple[str, str]] = []
+        seen_keys = set()
+        for lbl, st_t in zip(split_labels, start_labels):
+            if not lbl or lbl.lower() in ("unit", "exercise"):
+                continue
+            k = (lbl, st_t)
+            if k not in seen_keys:
+                seen_keys.add(k)
+                block_keys_in_order.append(k)
+
+        # Se esistono almeno 2 blocchi distinti e ciascun blocco rappresenta un vero drill (non note per singolo atleta)
+        if len(block_keys_in_order) >= 2:
+            # Ordina cronologicamente se c_start è valorizzato
+            if c_start and all(bool(k[1]) for k in block_keys_in_order):
+                block_keys_in_order.sort(key=lambda k: k[1])
+
+            group_sizes = []
+            for lbl, st_t in block_keys_in_order:
+                m_blk = (split_labels == lbl) & (start_labels == st_t)
+                group_sizes.append(int(m_blk.sum()))
+
+            is_genuine_multi = has_type_d or (max(group_sizes) >= 2 and len(block_keys_in_order) <= max(2, int(len(df_work) * 0.5)))
+            if is_genuine_multi:
+                # Conta occorrenze dello stesso nome per numerare eventuali blocchi omonimi (es. 'collettivo (1)', '(2)')
+                lbl_totals: Dict[str, int] = {}
+                for lbl, _ in block_keys_in_order:
+                    lbl_totals[lbl] = lbl_totals.get(lbl, 0) + 1
+                lbl_seen: Dict[str, int] = {}
+
+                for lbl, st_t in block_keys_in_order:
+                    m_blk = (split_labels == lbl) & (start_labels == st_t)
+                    sub_df = df_work.loc[m_blk].copy()
+                    if lbl_totals[lbl] > 1:
+                        lbl_seen[lbl] = lbl_seen.get(lbl, 0) + 1
+                        display_lbl = f"{lbl} ({lbl_seen[lbl]})"
+                    else:
+                        display_lbl = lbl
+                    drill_slices.append((display_lbl, sub_df))
+
+    if not drill_slices:
+        # Singolo drill (eventualmente già filtrato su type=='D')
+        single_hint = None
+        if c_split is not None:
+            uniq_lbls = list(dict.fromkeys(v for v in df_work[c_split].apply(_safe_str).tolist() if v and v.lower() not in ("unit", "exercise")))
+            if len(uniq_lbls) == 1 and len(uniq_lbls[0]) <= 60:
+                single_hint = uniq_lbls[0]
+        drill_slices = [(single_hint or suggest_drill_name_from_file(filename, df_work), df_work)]
+
+    parsed_results: List[Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]], str]] = []
+    for lbl, sub_df in drill_slices:
+        try:
+            res = _parse_drill_dataframe(
+                sub_df,
+                filename=filename,
+                roster_role_map=roster_role_map,
+                min_dist_m=min_dist_m,
+                min_wr_mpm=min_wr_mpm,
+                min_rel_dist_pct=min_rel_dist_pct,
+                forced_drill_name=lbl,
+            )
+            parsed_results.append(res)
+            file_meta["detected_drill_names"].append(res[3])
+        except ValueError:
+            continue
+
+    if not parsed_results:
+        raise ValueError(f"Nessuna riga atleta valida trovata nel file '{filename}'.")
+
+    file_meta["is_multi_drill"] = (len(parsed_results) > 1) or bool(file_meta["skipped_session_summary"])
+    return parsed_results, file_meta
+
+
+def parse_drill_file(
+    file_bytes: bytes,
+    filename: str,
+    roster_role_map: Optional[Dict[str, Tuple[str, str]]] = None,
+    min_dist_m: float = DEFAULT_MIN_DIST_M,
+    min_wr_mpm: float = DEFAULT_MIN_WR_MPM,
+    min_rel_dist_pct: float = DEFAULT_MIN_REL_DIST_PCT,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]], str]:
+    """Wrapper retro-compatibile per singolo file CSV/Excel: restituisce il primo drill estratto."""
+    parsed_list, _ = parse_drill_file_multi(
+        file_bytes=file_bytes,
+        filename=filename,
+        roster_role_map=roster_role_map,
+        min_dist_m=min_dist_m,
+        min_wr_mpm=min_wr_mpm,
+        min_rel_dist_pct=min_rel_dist_pct,
+    )
+    return parsed_list[0]
 
 
 def _empty_master_df() -> pd.DataFrame:

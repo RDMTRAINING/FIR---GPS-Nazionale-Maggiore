@@ -463,11 +463,11 @@ def _render_tab_sessione(
                     )
 
             uploaded_files = st.file_uploader(
-                "Carica i CSV / Excel dei singoli Drills della seduta (selezione multipla abilitata)",
+                "Carica i CSV / Excel dei Drills della seduta (singoli file o export GPExe multi-drill)",
                 type=["csv", "xlsx", "xls"],
                 accept_multiple_files=True,
                 key="drills_multi_uploader",
-                help="Puoi selezionare contemporaneamente tutti i file dei blocchi/drills (es. Warm Up, 1v1 Breakdown, Small Sided Games).",
+                help="Puoi caricare più file separati (1 per drill) oppure un singolo export GPExe completo: il parser separerà automaticamente i singoli blocchi (type='D') escludendo il riepilogo totale seduta (type='S').",
             )
 
             if uploaded_files:
@@ -476,10 +476,13 @@ def _render_tab_sessione(
 
                 parsed_items = []
                 parse_errors = []
+                multi_notices = []
+                detected_dates = set()
+
                 for idx, uf in enumerate(uploaded_files):
                     try:
                         f_bytes = uf.getvalue()
-                        summary_rec, player_recs, role_recs, suggested = drills_manager.parse_drill_file(
+                        drill_tuples, f_meta = drills_manager.parse_drill_file_multi(
                             f_bytes,
                             uf.name,
                             roster_role_map=roster_map,
@@ -487,10 +490,32 @@ def _render_tab_sessione(
                             min_wr_mpm=min_wr_mpm,
                             min_rel_dist_pct=min_rel_pct,
                         )
-                        parsed_items.append((idx, uf.name, summary_rec, player_recs, role_recs, suggested))
+                        if f_meta.get("detected_session_date"):
+                            detected_dates.add(f_meta["detected_session_date"])
+
+                        if f_meta.get("is_multi_drill"):
+                            d_names_str = ", ".join(f"**{n}**" for n in f_meta.get("detected_drill_names", []))
+                            skip_msg = ""
+                            if f_meta.get("skipped_session_summary"):
+                                s_lbl = f_meta.get("skipped_session_label") or "totale seduta"
+                                skip_msg = f" (escluso automaticamente il riepilogo `type='S'` **{s_lbl}** per evitare doppi conteggi)"
+                            multi_notices.append(
+                                f"✂️ Export GPExe multi-drill rilevato in **{uf.name}**: estratti automaticamente **{len(drill_tuples)} drills** ({d_names_str}){skip_msg}."
+                            )
+
+                        for sub_idx, (summary_rec, player_recs, role_recs, suggested) in enumerate(drill_tuples):
+                            parsed_items.append((idx, sub_idx, uf.name, summary_rec, player_recs, role_recs, suggested))
                     except Exception as exc:
                         parse_errors.append(f"❌ **{uf.name}**: {exc}")
 
+                for note_msg in multi_notices:
+                    st.info(note_msg)
+                if detected_dates and session_date_str and session_date_str not in detected_dates:
+                    dates_joined = ", ".join(sorted(detected_dates))
+                    st.caption(
+                        f"📅 Nota: nei file caricati risulta la data **{dates_joined}** "
+                        f"(verifica che corrisponda alla `Session_Date` selezionata sopra: **{session_date_str}**)."
+                    )
                 for err in parse_errors:
                     st.error(err)
 
@@ -501,7 +526,7 @@ def _render_tab_sessione(
                             <div style="font-size:0.84rem; font-weight:800; color:{FIR_NAVY};
                                         margin:10px 0 6px 0; padding-bottom:4px;
                                         border-bottom:2px solid {FIR_AZZURO};">
-                                🏷️ Assegnazione Dinamica Drill_Name, Sequenza &amp; Verifica Giocatori Attivi
+                                🏷️ Assegnazione Dinamica Drill_Name, Sequenza &amp; Verifica Giocatori Attivi ({len(parsed_items)} blocchi rilevati)
                             </div>
                             """
                         ),
@@ -513,8 +538,9 @@ def _render_tab_sessione(
                     configured_roles = []
                     excluded_preview_rows = []
 
-                    for pos_i, (orig_idx, fname, s_rec, p_recs, r_recs, suggested) in enumerate(parsed_items, start=1):
-                        key_base = f"drill_cfg_{orig_idx}_{abs(hash(fname)) % 100000}"
+                    for pos_i, (orig_idx, sub_idx, fname, s_rec, p_recs, r_recs, suggested) in enumerate(parsed_items, start=1):
+                        safe_tag = "".join(ch if ch.isalnum() else "_" for ch in f"{fname}_{suggested}")[:36]
+                        key_base = f"drill_cfg_{orig_idx}_{sub_idx}_{safe_tag}"
                         c_ord, c_bank, c_name, c_prev = st.columns([0.70, 1.55, 1.85, 3.1])
                         with c_ord:
                             d_order = st.number_input(
@@ -533,8 +559,9 @@ def _render_tab_sessione(
                             )
                         with c_name:
                             init_name = suggested if bank_choice == "— Nome manuale —" else bank_choice
+                            lbl_src = suggested[:22] if len(parsed_items) > len(uploaded_files) else fname[:22]
                             d_name = st.text_input(
-                                f"Drill_Name ({fname[:22]})",
+                                f"Drill_Name ({lbl_src})",
                                 value=init_name,
                                 key=f"{key_base}_name_{bank_choice}",
                             ).strip()
