@@ -11,6 +11,7 @@ Produce fascicoli A4 Landscape fedeli alla pagina della webapp, completi di:
 """
 
 from io import BytesIO
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -34,17 +35,27 @@ from pdf_generator import (
 )
 
 
+def _strip_pdf_emojis(text: Any) -> str:
+    """Rimuove emoji Unicode non supportate da Helvetica (evita i quadratini neri nei PDF)."""
+    s = str(text or "")
+    # Rimuove simboli emoji (plane 1 + misc symbols/dingbats/variation selectors) preservando accenti italiani, €, %, ·, Σ, Δ, ×, >
+    s = re.sub(r"[\U00010000-\U0010FFFF\u2600-\u27BF\u2300-\u23FF\uFE0F\u200D]", "", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
+
 def _drills_fig_to_rl_image(fig: Optional[go.Figure], width: float = 535, height: float = 200):
-    """Converte un grafico Plotly in PNG nitido (~216 DPI) ottimizzato per velocità e RAM su Streamlit Cloud."""
+    """Converte un grafico Plotly in PNG nitido con proporzioni ampie (nessuna sovrapposizione etichette)."""
     if fig is None:
         styles = getSampleStyleSheet()
         return Paragraph("<i>[Grafico non disponibile]</i>", styles["Normal"])
     try:
-        img_bytes = fig.to_image(format="png", width=int(width * 1.45), height=int(height * 1.45), scale=2)
+        # 1.75x logica + scale=2 garantisce proporzioni ariose identiche alla webapp e nitidezza di stampa
+        img_bytes = fig.to_image(format="png", width=int(width * 1.75), height=int(height * 1.75), scale=2)
         return RLImage(BytesIO(img_bytes), width=width, height=height)
     except Exception:
         try:
-            img_bytes = fig.to_image(format="png", width=int(width * 1.2), height=int(height * 1.2), scale=1)
+            img_bytes = fig.to_image(format="png", width=int(width * 1.4), height=int(height * 1.4), scale=1)
             return RLImage(BytesIO(img_bytes), width=width, height=height)
         except Exception:
             styles = getSampleStyleSheet()
@@ -125,11 +136,11 @@ def _kpi_row_table(kpis: List[Tuple[str, str, str, str]], total_width: float = 8
         col_idx = i * 2
         row_cells.append(
             [
-                Paragraph(lbl.upper(), st_lbl),
+                Paragraph(_strip_pdf_emojis(lbl).upper(), st_lbl),
                 Spacer(1, 2),
-                Paragraph(val, st_val),
+                Paragraph(_strip_pdf_emojis(val), st_val),
                 Spacer(1, 2),
-                Paragraph(sub, st_sub),
+                Paragraph(_strip_pdf_emojis(sub), st_sub),
             ]
         )
         col_widths.append(card_w)
@@ -168,11 +179,11 @@ def _styled_data_table(
     st_cl = ParagraphStyle("TCL", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=font_size, leading=font_size + 1.6, textColor=colors.HexColor(HEX_NAVY), alignment=0)
     st_cr = ParagraphStyle("TCR", parent=styles["Normal"], fontName="Helvetica", fontSize=font_size, leading=font_size + 1.6, textColor=colors.HexColor("#1E293B"), alignment=2)
 
-    data = [[Paragraph(str(h), st_hl if idx in left_set else st_h) for idx, h in enumerate(headers)]]
+    data = [[Paragraph(_strip_pdf_emojis(h), st_hl if idx in left_set else st_h) for idx, h in enumerate(headers)]]
     for r in rows:
         data.append(
             [
-                Paragraph(str(v), st_cl if idx in left_set else st_cr)
+                Paragraph(_strip_pdf_emojis(v), st_cl if idx in left_set else st_cr)
                 for idx, v in enumerate(r)
             ]
         )

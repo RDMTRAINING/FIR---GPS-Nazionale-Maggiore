@@ -169,31 +169,35 @@ def _get_existing_fir_gps_sessions() -> List[Tuple[str, str]]:
     return sessions
 
 
-def _apply_fir_plotly_layout(fig: go.Figure, title: str, height: int = 380) -> go.Figure:
+def _apply_fir_plotly_layout(fig: go.Figure, title: str, height: int = 395) -> go.Figure:
     fig.update_layout(
         title=dict(
             text=f"<b>{title}</b>",
-            font=dict(size=13.5, color=FIR_NAVY),
+            font=dict(size=13, color=FIR_NAVY),
             x=0.01,
             xanchor="left",
+            y=0.97,
+            yanchor="top",
         ),
         height=height,
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#F8FAFC",
-        font=dict(family="Inter, -apple-system, BlinkMacSystemFont, sans-serif", color=FIR_NAVY, size=11.5),
-        margin=dict(l=46, r=46, t=54, b=48),
+        font=dict(family="Inter, -apple-system, BlinkMacSystemFont, sans-serif", color=FIR_NAVY, size=11),
+        margin=dict(l=56, r=56, t=78, b=52),
         legend=dict(
             orientation="h",
+            traceorder="normal",
             yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1.0,
-            bgcolor="rgba(255,255,255,0.88)",
+            y=1.01,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10.5, color=FIR_NAVY),
+            bgcolor="rgba(255,255,255,0.90)",
         ),
         hovermode="x unified",
     )
-    fig.update_xaxes(showgrid=False, linecolor="#CBD5E1", tickfont=dict(color=FIR_NAVY, size=10.5))
-    fig.update_yaxes(gridcolor="#E2E8F0", linecolor="#CBD5E1", tickfont=dict(color=FIR_SLATE, size=10.5))
+    fig.update_xaxes(showgrid=False, linecolor="#CBD5E1", automargin=True, tickfont=dict(color=FIR_NAVY, size=10.5))
+    fig.update_yaxes(gridcolor="#E2E8F0", linecolor="#CBD5E1", automargin=True, tickfont=dict(color=FIR_SLATE, size=10.5))
     return fig
 
 
@@ -840,9 +844,16 @@ def _render_tab_sessione(
     # RIGA GRAFICI 1 — VOLUME & TEMPO vs WORK RATE  |  INTENSITÀ RELATIVA AL MINUTO
     # =========================================================================
     col_g1, col_g2 = st.columns(2)
+    wr_vals = pd.to_numeric(df_sess["Work_Rate"], errors="coerce").fillna(0.0)
+    wr_min = float(wr_vals.min()) if not wr_vals.empty else 0.0
+    wr_max = float(wr_vals.max()) if not wr_vals.empty else 100.0
+    wr_span = max(wr_max - wr_min, 6.0)
+
     with col_g1:
         dist_col = "Total_Distance_Sum" if is_total_mode else "Total_Distance"
         dist_title = "Distanza Totale (m)" if is_total_mode else "Distanza Pro-Capite (m)"
+        max_dist_v = max(float(pd.to_numeric(df_sess[dist_col], errors="coerce").fillna(0.0).max()), 1.0)
+
         fig_vol_wr = make_subplots(specs=[[{"secondary_y": True}]])
         fig_vol_wr.add_trace(
             go.Bar(
@@ -850,8 +861,11 @@ def _render_tab_sessione(
                 y=df_sess[dist_col],
                 name=dist_title,
                 marker=dict(color=FIR_AZZURO, line=dict(color=FIR_NAVY, width=1)),
-                text=[f"{v:,.0f}m<br>({d:.1f}')" for v, d in zip(df_sess[dist_col], df_sess["Duration_Min"])],
-                textposition="outside",
+                text=[f"<b>{v:,.0f}m</b><br>({d:.1f}')" for v, d in zip(df_sess[dist_col], df_sess["Duration_Min"])],
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(color="#FFFFFF", size=11),
+                cliponaxis=False,
             ),
             secondary_y=False,
         )
@@ -862,23 +876,34 @@ def _render_tab_sessione(
                 name="Work Rate (m/min)",
                 mode="lines+markers+text",
                 line=dict(color=FIR_ORO, width=3),
-                marker=dict(size=9, color=FIR_ORO, line=dict(color=FIR_NAVY, width=1.5)),
-                text=[f"{v:.1f}" for v in df_sess["Work_Rate"]],
+                marker=dict(size=9, color=FIR_ORO, line=dict(color=FIR_NAVY, width=1.6)),
+                text=[f"<b>{v:.1f}</b>" for v in df_sess["Work_Rate"]],
                 textposition="top center",
-                textfont=dict(color=FIR_NAVY, size=10.5),
+                textfont=dict(color=FIR_NAVY, size=11),
+                cliponaxis=False,
             ),
             secondary_y=True,
         )
-        fig_vol_wr.update_yaxes(title_text=dist_title, secondary_y=False)
-        fig_vol_wr.update_yaxes(title_text="Work Rate (m/min)", secondary_y=True, showgrid=False)
+        fig_vol_wr.update_yaxes(title_text=dist_title, range=[0, max_dist_v * 1.38], secondary_y=False)
+        fig_vol_wr.update_yaxes(
+            title_text="Work Rate (m/min)",
+            range=[max(0.0, wr_min - wr_span * 2.2), wr_max + wr_span * 0.55],
+            secondary_y=True,
+            showgrid=False,
+        )
         _apply_fir_plotly_layout(
             fig_vol_wr,
             f"Volume & Durata vs Work Rate — {sel_scope_sess}",
-            height=385,
+            height=400,
         )
         st.plotly_chart(fig_vol_wr, use_container_width=True)
 
     with col_g2:
+        max_rate_v = max(
+            float(pd.to_numeric(df_sess["HMPD_per_Min"], errors="coerce").fillna(0.0).max()),
+            float(pd.to_numeric(df_sess["HSR_per_Min"], errors="coerce").fillna(0.0).max()),
+            1.0,
+        )
         fig_rates = make_subplots(specs=[[{"secondary_y": True}]])
         fig_rates.add_trace(
             go.Bar(
@@ -886,8 +911,10 @@ def _render_tab_sessione(
                 y=df_sess["HMPD_per_Min"],
                 name="Hml/min (m/min)",
                 marker=dict(color=FIR_NAVY, line=dict(color=FIR_NAVY, width=1)),
-                text=[f"{v:.1f}" for v in df_sess["HMPD_per_Min"]],
+                text=[f"<b>{v:.1f}</b>" for v in df_sess["HMPD_per_Min"]],
                 textposition="outside",
+                textfont=dict(color=FIR_NAVY, size=10.5),
+                cliponaxis=False,
             ),
             secondary_y=False,
         )
@@ -897,8 +924,10 @@ def _render_tab_sessione(
                 y=df_sess["HSR_per_Min"],
                 name="HSR/min (>18/>20)",
                 marker=dict(color=FIR_ORO, line=dict(color=FIR_NAVY, width=1)),
-                text=[f"{v:.1f}" for v in df_sess["HSR_per_Min"]],
+                text=[f"<b>{v:.1f}</b>" for v in df_sess["HSR_per_Min"]],
                 textposition="outside",
+                textfont=dict(color=FIR_NAVY, size=10.5),
+                cliponaxis=False,
             ),
             secondary_y=False,
         )
@@ -908,21 +937,27 @@ def _render_tab_sessione(
                 y=df_sess["Work_Rate"],
                 name="Work Rate (m/min)",
                 mode="lines+markers+text",
-                line=dict(color=FIR_AZZURO, width=2.5, dash="dot"),
-                marker=dict(size=8, color=FIR_AZZURO),
-                text=[f"{v:.1f}" for v in df_sess["Work_Rate"]],
+                line=dict(color=FIR_AZZURO, width=2.6, dash="dot"),
+                marker=dict(size=8.5, color=FIR_AZZURO, line=dict(color="#FFFFFF", width=1.4)),
+                text=[f"<b>{v:.1f}</b>" for v in df_sess["Work_Rate"]],
                 textposition="top center",
-                textfont=dict(color=FIR_AZZURO, size=10),
+                textfont=dict(color=FIR_AZZURO, size=10.5),
+                cliponaxis=False,
             ),
             secondary_y=True,
         )
         fig_rates.update_layout(barmode="group")
-        fig_rates.update_yaxes(title_text="Hml/min & HSR/min (m/min)", secondary_y=False)
-        fig_rates.update_yaxes(title_text="Work Rate (m/min)", secondary_y=True, showgrid=False)
+        fig_rates.update_yaxes(title_text="Hml/min & HSR/min (m/min)", range=[0, max_rate_v * 1.52], secondary_y=False)
+        fig_rates.update_yaxes(
+            title_text="Work Rate (m/min)",
+            range=[max(0.0, wr_min - wr_span * 2.4), wr_max + wr_span * 0.55],
+            secondary_y=True,
+            showgrid=False,
+        )
         _apply_fir_plotly_layout(
             fig_rates,
-            f"Intensità Relativa al Tempo (Hml/min · HSR/min · Work Rate) — {sel_scope_sess}",
-            height=385,
+            f"Intensità al Minuto (Hml/min · HSR/min · Work Rate) — {sel_scope_sess}",
+            height=400,
         )
         st.plotly_chart(fig_rates, use_container_width=True)
 
@@ -959,9 +994,10 @@ def _render_tab_sessione(
                     opacity=0.88,
                     line=dict(color=FIR_NAVY, width=1.8),
                 ),
-                text=[f"#{int(r['Drill_Order'])} {r['Drill_Name']}" for _, r in df_sess.iterrows()],
+                text=[f"<b>#{int(r['Drill_Order'])} {r['Drill_Name']}</b>" for _, r in df_sess.iterrows()],
                 textposition="top center",
                 textfont=dict(size=10.5, color=FIR_NAVY),
+                cliponaxis=False,
                 customdata=np.stack(
                     [
                         df_sess["Total_Distance"],
@@ -988,23 +1024,30 @@ def _render_tab_sessione(
             fig_matrix.add_vline(x=mean_x, line_dash="dash", line_color="#94A3B8", line_width=1.4)
             fig_matrix.add_hline(y=mean_y, line_dash="dash", line_color="#94A3B8", line_width=1.4)
 
-        fig_matrix.update_xaxes(title_text="Durata Effettiva Drill (min)")
-        fig_matrix.update_yaxes(title_text=y_matrix_opts[sel_y_mat])
+        xm_min = float(df_sess["Duration_Min"].min())
+        xm_max = float(df_sess["Duration_Min"].max())
+        ym_min = float(df_sess[sel_y_mat].min())
+        ym_max = float(df_sess[sel_y_mat].max())
+        xm_pad = max((xm_max - xm_min) * 0.25, 0.9)
+        ym_pad = max((ym_max - ym_min) * 0.32, 1.8)
+
+        fig_matrix.update_xaxes(title_text="Durata Effettiva Drill (min)", range=[max(0.0, xm_min - xm_pad), xm_max + xm_pad])
+        fig_matrix.update_yaxes(title_text=y_matrix_opts[sel_y_mat], range=[max(0.0, ym_min - ym_pad), ym_max + ym_pad * 1.35])
         _apply_fir_plotly_layout(
             fig_matrix,
-            f"Mappa Operativa Drills: Durata × {y_matrix_opts[sel_y_mat]} (bolla = Hml)",
-            height=355,
+            f"Mappa Operativa: Durata × {y_matrix_opts[sel_y_mat]} (bolla = Hml)",
+            height=370,
         )
-        fig_matrix.update_layout(hovermode="closest")
+        fig_matrix.update_layout(margin=dict(l=58, r=28, t=64, b=52), hovermode="closest")
         st.plotly_chart(fig_matrix, use_container_width=True)
 
     with col_g4:
         st.markdown("<div style='height:28px; padding-top:6px; font-size:0.78rem; font-weight:700; color:#475569;'>Quota % di Tempo e Carico assorbita da ciascun Drill nella Seduta</div>", unsafe_allow_html=True)
         share_metrics = [
-            ("⏱️ Tempo (%)", "Duration_Min"),
-            ("📏 Distanza (%)", "Total_Distance_Sum" if is_total_mode else "Total_Distance"),
-            ("🔥 Hml (%)", "HMPD_Sum" if is_total_mode else "HMPD"),
-            ("🏃 HSR (%)", "HSR_Sum" if is_total_mode else "HSR"),
+            ("Tempo (%)", "Duration_Min"),
+            ("Distanza (%)", "Total_Distance_Sum" if is_total_mode else "Total_Distance"),
+            ("Hml (%)", "HMPD_Sum" if is_total_mode else "HMPD"),
+            ("HSR (%)", "HSR_Sum" if is_total_mode else "HSR"),
         ]
         fig_share = go.Figure()
         cat_labels = [m[0] for m in share_metrics]
@@ -1018,10 +1061,11 @@ def _render_tab_sessione(
                     x=pct_vals,
                     name=f"#{int(r['Drill_Order'])} {r['Drill_Name']}",
                     orientation="h",
-                    marker=dict(color=DRILL_PALETTE[d_idx % len(DRILL_PALETTE)], line=dict(color="#FFFFFF", width=1)),
-                    text=[f"{p:.0f}%" if p >= 9 else "" for p in pct_vals],
+                    marker=dict(color=DRILL_PALETTE[d_idx % len(DRILL_PALETTE)], line=dict(color="#FFFFFF", width=1.2)),
+                    text=[f"<b>{p:.0f}%</b>" if p >= 9 else "" for p in pct_vals],
                     textposition="inside",
-                    textfont=dict(color="#FFFFFF", size=10.5),
+                    insidetextanchor="middle",
+                    textfont=dict(color="#FFFFFF", size=11),
                     hovertemplate="<b>%{fullData.name}</b><br>%{y}: %{x:.1f}%<extra></extra>",
                 )
             )
@@ -1029,10 +1073,11 @@ def _render_tab_sessione(
         fig_share.update_xaxes(range=[0, 100], ticksuffix="%")
         _apply_fir_plotly_layout(
             fig_share,
-            f"Ripartizione % Tempo vs Carico tra i Drills — {sel_name}",
-            height=355,
+            f"Ripartizione % Tempo vs Carico — {sel_name}",
+            height=370,
         )
-        fig_share.update_layout(hovermode="y unified")
+        fig_share.update_layout(margin=dict(l=92, r=24, t=78, b=46), hovermode="y unified")
+        fig_share.update_yaxes(tickfont=dict(color=FIR_NAVY, size=11), automargin=True)
         st.plotly_chart(fig_share, use_container_width=True)
 
     # =========================================================================
@@ -1102,6 +1147,17 @@ def _render_tab_sessione(
         fig_sec.update_layout(barmode="group")
         _apply_fir_plotly_layout(fig_sec, f"Eventi Neuromuscolari tra Drills ({tag_m})", height=350)
 
+    fig_sec.update_traces(cliponaxis=False)
+    # Aggiunge respiro in alto per evitare taglio etichette barre
+    sec_y_max = 0.0
+    for tr in fig_sec.data:
+        if getattr(tr, "y", None) is not None and len(tr.y) > 0:
+            try:
+                sec_y_max = max(sec_y_max, float(np.nanmax(pd.to_numeric(list(tr.y), errors="coerce"))))
+            except Exception:
+                pass
+    if sec_y_max > 0:
+        fig_sec.update_yaxes(range=[0, sec_y_max * 1.24])
     st.plotly_chart(fig_sec, use_container_width=True)
 
     # =========================================================================
@@ -1768,9 +1824,10 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                     y=comp_df[mat_y_choice],
                     mode="markers+text",
                     marker=dict(size=sz_b, color=col_b, opacity=0.88, line=dict(color=FIR_NAVY, width=1.8)),
-                    text=comp_df["Drill_Name"],
+                    text=[f"<b>{d}</b>" for d in comp_df["Drill_Name"]],
                     textposition="top center",
                     textfont=dict(size=10.5, color=FIR_NAVY),
+                    cliponaxis=False,
                     customdata=np.stack(
                         [comp_df["Dist_ProCapite"], comp_df["Hml_ProCapite"], comp_df["HSR_ProCapite"], comp_df["Esecuzioni"]],
                         axis=-1,
@@ -1786,10 +1843,14 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
             )
             fig_bank_matrix.add_vline(x=float(comp_df["Durata_Media"].mean()), line_dash="dash", line_color="#94A3B8", line_width=1.4)
             fig_bank_matrix.add_hline(y=float(comp_df[mat_y_choice].mean()), line_dash="dash", line_color="#94A3B8", line_width=1.4)
-            fig_bank_matrix.update_xaxes(title_text="Durata Media Drill (min)")
-            fig_bank_matrix.update_yaxes(title_text=mat_y_choice.replace("_", " "))
-            _apply_fir_plotly_layout(fig_bank_matrix, f"Mappa Durata × Intensità tra Drills (bolla = Hml)", height=345)
-            fig_bank_matrix.update_layout(hovermode="closest")
+            bx_min, bx_max = float(comp_df["Durata_Media"].min()), float(comp_df["Durata_Media"].max())
+            by_min, by_max = float(comp_df[mat_y_choice].min()), float(comp_df[mat_y_choice].max())
+            bx_pad = max((bx_max - bx_min) * 0.25, 0.9)
+            by_pad = max((by_max - by_min) * 0.32, 1.8)
+            fig_bank_matrix.update_xaxes(title_text="Durata Media Drill (min)", range=[max(0.0, bx_min - bx_pad), bx_max + bx_pad])
+            fig_bank_matrix.update_yaxes(title_text=mat_y_choice.replace("_", " "), range=[max(0.0, by_min - by_pad), by_max + by_pad * 1.35])
+            _apply_fir_plotly_layout(fig_bank_matrix, "Mappa Durata × Intensità tra Drills (bolla = Hml)", height=365)
+            fig_bank_matrix.update_layout(margin=dict(l=58, r=28, t=64, b=52), hovermode="closest")
             st.plotly_chart(fig_bank_matrix, use_container_width=True)
 
         # 3. CONFRONTO BARRE + TABELLA DIFFERENZIALE Δ% RISPETTO AL BENCHMARK
@@ -1820,6 +1881,7 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
             key=f"drill_bank_compare_metric_{is_total_mode}",
         )
         comp_sorted = comp_df.sort_values(by=comp_metric, ascending=False)
+        comp_max_y = max(float(comp_sorted[comp_metric].max()), 1.0)
         fig_comp = go.Figure(
             go.Bar(
                 x=comp_sorted["Drill_Name"],
@@ -1828,15 +1890,17 @@ def _render_tab_drill_bank(df_master: pd.DataFrame, df_roles: pd.DataFrame):
                     color=[FIR_ORO if d == benchmark_drill else FIR_AZZURO for d in comp_sorted["Drill_Name"]],
                     line=dict(color=FIR_NAVY, width=1.2),
                 ),
-                text=[f"{v:,.1f}<br>({dur:.1f}')" for v, dur in zip(comp_sorted[comp_metric], comp_sorted["Durata_Media"])],
+                text=[f"<b>{v:,.1f}</b><br>({dur:.1f}')" for v, dur in zip(comp_sorted[comp_metric], comp_sorted["Durata_Media"])],
                 textposition="outside",
+                cliponaxis=False,
             )
         )
         _apply_fir_plotly_layout(
             fig_comp,
             f"Confronto Diretto Multi-Drill — {comp_metric_map[comp_metric]} (Oro = Benchmark '{benchmark_drill}')",
-            height=355,
+            height=365,
         )
+        fig_comp.update_yaxes(range=[0, comp_max_y * 1.28])
         fig_comp.update_layout(showlegend=False)
         st.plotly_chart(fig_comp, use_container_width=True)
 
