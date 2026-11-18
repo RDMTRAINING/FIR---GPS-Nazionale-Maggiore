@@ -73,6 +73,7 @@ MANAGED_PARQUET_TABLES: List[str] = [
     "gps_records",
     "drills_master",
     "drills_players_detail",
+    "drills_roles_summary",
 ]
 
 MANAGED_JSON_FILES: List[str] = [
