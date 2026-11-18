@@ -18,6 +18,7 @@ if not hasattr(config, "render_navigation_cards"):
 import streamlit as st
 from config import get_theme, apply_custom_css, LOGO_PATH, get_logo_base64
 import cloud_storage
+import drills_manager
 import utils
 import auth
 import views.home
@@ -31,6 +32,7 @@ import views.admin_utenti
 import views.dashboard_home
 import views.analisi_individuale
 import views.palestra_gymaware
+import views.analisi_drills
 import views.cambio_password
 import global_state
 import views.login
@@ -79,6 +81,7 @@ def main():
 
     counts = utils.get_history_team_counts()
     gym_stats = utils.get_gymaware_summary_stats()
+    drills_stats = drills_manager.get_drills_summary_stats()
     players_df = utils.get_players_df()
     camps_df = utils.get_camps_df()
     matches_df = utils.get_matches_df()
@@ -151,13 +154,14 @@ def main():
             "medie_confronti": "medie_tipologie_fir",
             "analisi_individuale": "gps_atleta",
             "palestra_gymaware": "squadra_ranking",
+            "analisi_drills": "gestione_sessione",
             "pannello_controllo": "roster",
             "storico_dati": "nazionale",
             "import_dati": "csv_import",
             "cambio_password": "cambio_password",
         }
 
-        # Menu Principale (con nuova sezione Palestra & GymAware dopo Analisi Individuale)
+        # Menu Principale (con sezione Analisi & Confronto Drills)
         if user_role == "admin":
             nav_items = [
                 ("dashboard_home", "1. 🏠 Home"),
@@ -166,11 +170,12 @@ def main():
                 ("medie_confronti", "4. ⚖️ Medie e confronti"),
                 ("analisi_individuale", "5. 👤 Analisi individuale"),
                 ("palestra_gymaware", "6. 🏋️ Palestra & GymAware (VBT)"),
-                ("pannello_controllo", "7. ⚙️ Pannello di controllo FIR"),
-                ("storico_dati", "8. 🗄️ Storico dati"),
-                ("import_dati", "9. 📥 Importazione"),
-                ("cambio_password", "10. 🔑 Cambio password"),
-                ("logout", "11. 🚪 Logout"),
+                ("analisi_drills", "7. 🧩 Analisi & Confronto Drills"),
+                ("pannello_controllo", "8. ⚙️ Pannello di controllo FIR"),
+                ("storico_dati", "9. 🗄️ Storico dati"),
+                ("import_dati", "10. 📥 Importazione"),
+                ("cambio_password", "11. 🔑 Cambio password"),
+                ("logout", "12. 🚪 Logout"),
             ]
         else:
             # Per profili di sola visualizzazione (Viewer / Staff)
@@ -180,8 +185,9 @@ def main():
                 ("medie_confronti", "3. ⚖️ Medie e confronti"),
                 ("analisi_individuale", "4. 👤 Analisi individuale"),
                 ("palestra_gymaware", "5. 🏋️ Palestra & GymAware (VBT)"),
-                ("cambio_password", "6. 🔑 Cambio password"),
-                ("logout", "7. 🚪 Logout"),
+                ("analisi_drills", "6. 🧩 Analisi & Confronto Drills"),
+                ("cambio_password", "7. 🔑 Cambio password"),
+                ("logout", "8. 🚪 Logout"),
             ]
 
         for page_id, page_label in nav_items:
@@ -244,6 +250,9 @@ def main():
                 <div style="font-size:0.78rem; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,0.1); padding-top:3px; margin-top:3px;">
                     <span>GymAware (VBT):</span> <b style="color:#F59E0B;">{gym_stats['total_sets']:,} set</b>
                 </div>
+                <div style="font-size:0.78rem; display:flex; justify-content:space-between; border-top:1px solid rgba(255,255,255,0.1); padding-top:3px; margin-top:3px;">
+                    <span>Drills Archiviati:</span> <b style="color:#D4AF37;">{drills_stats['total_drills']:,} ({drills_stats['total_sessions']} sed.)</b>
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -265,6 +274,7 @@ def main():
         "medie_confronti",
         "analisi_individuale",
         "palestra_gymaware",
+        "analisi_drills",
         "cambio_password",
     )
     if user_role != "admin" and page not in allowed_viewer_pages:
@@ -301,7 +311,10 @@ def main():
     # 6. Palestra & GymAware (VBT)
     elif page == "palestra_gymaware":
         views.palestra_gymaware.render_palestra_gymaware(t)
-    # 7. Pannello di controllo FIR
+    # 7. Analisi & Confronto Drills
+    elif page == "analisi_drills":
+        views.analisi_drills.render_analisi_drills(t)
+    # 8. Pannello di controllo FIR
     elif page == "pannello_controllo":
         if user_role == "admin":
             importlib.reload(views.pannello_controllo)

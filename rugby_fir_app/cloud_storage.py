@@ -71,6 +71,8 @@ MANAGED_PARQUET_TABLES: List[str] = [
     "oval_matches",
     "club_mappings",
     "gps_records",
+    "drills_master",
+    "drills_players_detail",
 ]
 
 MANAGED_JSON_FILES: List[str] = [
