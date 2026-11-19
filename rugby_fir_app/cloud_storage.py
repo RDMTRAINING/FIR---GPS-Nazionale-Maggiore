@@ -230,6 +230,11 @@ def get_cloud_config() -> Dict[str, Any]:
     return _CONFIG_CACHE
 
 
+def is_cloud_enabled() -> bool:
+    """Restituisce True se è configurato un provider Cloud Object Storage (S3 o Supabase)."""
+    return bool(get_cloud_config().get("enabled", False))
+
+
 # ==============================================================================
 # CLIENT S3 (BOTO3) E SUPABASE STORAGE
 # ==============================================================================
