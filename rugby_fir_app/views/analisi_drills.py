@@ -667,14 +667,23 @@ def _render_tab_sessione(
                         )
                         st.session_state["drills_last_saved_session"] = (session_date_str, session_name_str)
                         replace_note = f" (ripuliti e sostituiti {removed_n} vecchi record della seduta)" if removed_n > 0 else ""
-                        st.session_state["drills_save_feedback"] = (
-                            f"✅ Archiviati **{inserted_n} drills** per **{session_date_str} — {session_name_str}** "
-                            f"con HSR differenziato FIR (>18 Av / >20 Tq) e normalizzazione per ruolo in `drills_master.parquet` + Cloud Storage{replace_note}."
-                        )
+                        if drills_manager.cloud_storage.is_cloud_enabled() and not drills_manager.get_last_save_cloud_ok():
+                            cloud_err = drills_manager.cloud_storage.get_last_cloud_error() or "Errore upload Supabase"
+                            st.session_state["drills_save_error"] = (
+                                f"⚠️ Archiviati **{inserted_n} drills** in locale per **{session_date_str} — {session_name_str}**, "
+                                f"ma il **backup Cloud Storage è FALLITO** (`{cloud_err}`). Riprova tra qualche secondo per non perdere i dati al riavvio."
+                            )
+                        else:
+                            st.session_state["drills_save_feedback"] = (
+                                f"✅ Archiviati **{inserted_n} drills** per **{session_date_str} — {session_name_str}** "
+                                f"con HSR differenziato FIR (>18 Av / >20 Tq) e normalizzazione per ruolo in `drills_master.parquet` + Cloud Storage{replace_note}."
+                            )
                         st.rerun()
     else:
         st.info("👁️ Modalità **Visualizzatore**: puoi consultare tutte le analisi comparative tra drills (con filtro per squadra/reparto/ruolo), il Drill Bank longitudinale ed esportare i report PDF.")
 
+    if st.session_state.get("drills_save_error"):
+        st.error(st.session_state.pop("drills_save_error"))
     if st.session_state.get("drills_save_feedback"):
         st.success(st.session_state.pop("drills_save_feedback"))
 

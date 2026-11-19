@@ -596,24 +596,29 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         "session_archetype": cur_type,
     }
 
-    # Match per Trombinoscopio: cerca preferibilmente il match legato al raduno attivo
-    default_match_d = "2026-11-14"
-    default_match_n = "ITALIA - ARGENTINA"
-    default_match_c = "NC Nov 2026"
-    if selected_camp is not None and "start_date" in selected_camp:
-        try:
-            c_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
-            c_end = c_start + pd.Timedelta(days=6)
-            lineup_summary = utils.get_lineup_matches_summary()
-            for _, r in lineup_summary.iterrows():
-                m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
-                if not pd.isna(m_d) and c_start <= m_d <= c_end:
-                    default_match_d = str(r["date_str"])
-                    default_match_n = str(r["match_name"])
-                    default_match_c = str(r["competition"])
-                    break
-        except Exception:
-            pass
+    # Match per Trombinoscopio: cerca preferibilmente il match legato al raduno attivo, altrimenti il più recente
+    default_match_d = pd.Timestamp.now().strftime("%Y-%m-%d")
+    default_match_n = "Nessun Match Selezionato"
+    default_match_c = "Nazionale Maggiore"
+    try:
+        lineup_summary = utils.get_lineup_matches_summary()
+        if lineup_summary is not None and not lineup_summary.empty:
+            first_r = lineup_summary.iloc[0]
+            default_match_d = str(first_r["date_str"])
+            default_match_n = str(first_r["match_name"])
+            default_match_c = str(first_r["competition"])
+            if selected_camp is not None and "start_date" in selected_camp:
+                c_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
+                c_end = c_start + pd.Timedelta(days=6)
+                for _, r in lineup_summary.iterrows():
+                    m_d = pd.to_datetime(str(r["date_str"])[:10], errors="coerce")
+                    if not pd.isna(m_d) and c_start <= m_d <= c_end:
+                        default_match_d = str(r["date_str"])
+                        default_match_n = str(r["match_name"])
+                        default_match_c = str(r["competition"])
+                        break
+    except Exception:
+        pass
 
     sel_m_d = st.session_state.get("global_selected_match_date", default_match_d)
     sel_m_n = st.session_state.get("global_selected_match_name", default_match_n)

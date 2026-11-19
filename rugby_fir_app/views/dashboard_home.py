@@ -95,7 +95,7 @@ def render_dashboard_home(t: dict):
             <span style="font-size:1.1rem;">🛡️</span>
             <div>
                 <div style="font-size:0.80rem; font-weight:700; color:#0F172A;">Esportazione Dati Base per la Federazione (Raw Data)</div>
-                <div style="font-size:0.70rem; color:#64748B;">Estrazione sterilizzata delle metriche grezze (Distanze, HSR, HMPD, Velocità, Acc/Dec e VBT). Metriche proprietarie.</div>
+                <div style="font-size:0.70rem; color:#64748B;">Estrazione sterilizzata delle metriche grezze (Distanze, HSR, Hml, Velocità, Acc/Dec e VBT). Metriche proprietarie.</div>
             </div>
         </div>
         """,

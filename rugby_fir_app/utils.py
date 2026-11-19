@@ -5,6 +5,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime, timedelta
+from typing import Optional
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -2303,7 +2304,7 @@ def reset_gin_to_default():
     save_table("players", p_df)
 
 
-def build_gin_6_12_report(ref_monday_str: str = "2026-11-02", sort_mode: str = "minuti", only_gin: bool = True) -> dict:
+def build_gin_6_12_report(ref_monday_str: Optional[str] = None, sort_mode: str = "minuti", only_gin: bool = True) -> dict:
     """
     Costruisce il Report 6\\12 Settimane G.I.N. (identico al modello Excel FIR 'Report Caps GIN MINUTI' e 'RUOLI')
     calcolando:
@@ -2316,10 +2317,13 @@ def build_gin_6_12_report(ref_monday_str: str = "2026-11-02", sort_mode: str = "
     p_df = get_players_df().copy()
     ov_df = get_oval_matches_df().copy()
 
+    today_norm = pd.Timestamp.now().normalize()
     try:
-        ref_monday = pd.to_datetime(str(ref_monday_str)[:10])
+        ref_monday = pd.to_datetime(str(ref_monday_str)[:10]) if ref_monday_str else today_norm
+        if pd.isna(ref_monday):
+            ref_monday = today_norm
     except Exception:
-        ref_monday = pd.Timestamp("2026-11-02")
+        ref_monday = today_norm
     # Align to Monday if user picked another weekday
     ref_monday = ref_monday - pd.Timedelta(days=ref_monday.weekday())
     ref_sunday = ref_monday + pd.Timedelta(days=6)
@@ -3411,7 +3415,7 @@ def get_available_franchige_days() -> list:
 
 
 def build_franchige_day_report(
-    sel_date_str: str = "2026-10-24",
+    sel_date_str: Optional[str] = None,
     only_gin: bool = True,
     sort_mode: str = "ruoli",
     team_filter: str = "all",
@@ -3426,6 +3430,13 @@ def build_franchige_day_report(
     gps_raw = get_gps_history_df(None if team_filter == "all" else team_filter).copy()
     ov_df = get_oval_matches_df().copy()
     p_df = get_players_df().copy()
+
+    if not sel_date_str:
+        if not gps_raw.empty and "session_date" in gps_raw.columns:
+            max_gps_d = gps_raw["session_date"].dropna().astype(str).str[:10].max()
+            sel_date_str = max_gps_d if max_gps_d else pd.Timestamp.now().strftime("%Y-%m-%d")
+        else:
+            sel_date_str = pd.Timestamp.now().strftime("%Y-%m-%d")
 
     if p_df.empty:
         return {

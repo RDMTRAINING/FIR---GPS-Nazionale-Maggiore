@@ -9,9 +9,6 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 import config
-if not hasattr(config, "render_navigation_cards"):
-    import importlib
-    importlib.reload(config)
 from config import render_page_header, render_navigation_cards
 import utils
 

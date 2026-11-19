@@ -25,9 +25,10 @@ def _get_available_weeks_options(start_date: str = "2024-08-01") -> tuple:
     first_mon = start_dt - pd.Timedelta(days=start_dt.weekday())
 
     # Lunedì di riferimento attuale (allineato con il dataset o data odierna)
+    today_norm = pd.Timestamp.now().normalize()
     camps_df = utils.get_camps_df()
-    max_c_dt = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else pd.Timestamp("2026-11-09")
-    now_dt = max(max_c_dt if not pd.isna(max_c_dt) else pd.Timestamp("2026-11-09"), pd.Timestamp.now())
+    max_c_dt = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else today_norm
+    now_dt = max(max_c_dt if not pd.isna(max_c_dt) else today_norm, today_norm)
     latest_mon = now_dt - pd.Timedelta(days=now_dt.weekday())  # Es. 2026-11-09
     prev_mon = latest_mon - pd.Timedelta(days=7)  # Es. 2026-10-26 (ultima settimana conclusa fino a domenica)
 

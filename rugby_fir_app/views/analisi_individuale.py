@@ -2,9 +2,6 @@
 import streamlit as st
 import pandas as pd
 import config
-if not hasattr(config, "render_navigation_cards"):
-    import importlib
-    importlib.reload(config)
 from config import render_page_header, render_navigation_cards
 import utils
 import views.report_6weeks

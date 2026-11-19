@@ -28,8 +28,8 @@ def _get_available_weeks_options() -> tuple:
     today_mon = today_dt - pd.Timedelta(days=today_dt.weekday())
     
     camps_df = utils.get_camps_df()
-    max_camp_mon = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else pd.Timestamp("2026-11-09")
-    latest_mon = max(today_mon, max_camp_mon if not pd.isna(max_camp_mon) else pd.Timestamp("2026-11-09"))
+    max_camp_mon = pd.to_datetime(camps_df["start_date"].dropna().max(), errors="coerce") if not camps_df.empty else today_mon
+    latest_mon = max(today_mon, max_camp_mon if not pd.isna(max_camp_mon) else today_mon)
 
     weeks = []
     cur = latest_mon

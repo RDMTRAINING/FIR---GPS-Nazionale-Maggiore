@@ -72,6 +72,10 @@ def render_login_page(t: dict):
                             st.success(f"Bentornato, {user_info['full_name']}!")
                             st.rerun()
                         else:
-                            st.error("Credenziali non valide. Verifica username e password.")
+                            lock_sec = auth.get_login_lockout_seconds(username)
+                            if lock_sec > 0:
+                                st.error(f"Troppi tentativi falliti. Riprova tra {lock_sec} secondi.")
+                            else:
+                                st.error("Credenziali non valide. Verifica username e password.")
 
             st.markdown("</div>", unsafe_allow_html=True)

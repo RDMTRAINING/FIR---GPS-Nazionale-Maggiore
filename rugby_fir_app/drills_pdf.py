@@ -10,6 +10,7 @@ Produce fascicoli A4 Landscape fedeli alla pagina della webapp, completi di:
   - Footer ufficiale FIR con watermark UID invisibile.
 """
 
+import gc
 from io import BytesIO
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -487,7 +488,11 @@ def crea_pdf_drills_sessione(
             elements.append(_styled_data_table(e_headers, e_rows, e_widths, left_cols=[0, 1, 2, 6], font_size=6.6))
 
     _build_pdf_with_footer(doc, elements)
-    return buf.getvalue()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    del elements, doc
+    gc.collect()
+    return pdf_bytes
 
 
 def crea_pdf_drill_bank(
@@ -667,4 +672,8 @@ def crea_pdf_drill_bank(
             elements.append(_styled_data_table(c_headers, c_rows, c_widths, left_cols=[0, 1], font_size=6.4))
 
     _build_pdf_with_footer(doc, elements)
-    return buf.getvalue()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    del elements, doc
+    gc.collect()
+    return pdf_bytes

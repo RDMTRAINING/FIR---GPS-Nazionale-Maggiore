@@ -1,7 +1,6 @@
 # Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import sys
-import importlib
 
 # Assicura priorità assoluta ai moduli di rugby_fir_app
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,8 +11,6 @@ elif sys.path[0] != _app_dir:
     sys.path.insert(0, _app_dir)
 
 import config
-if not hasattr(config, "render_navigation_cards"):
-    importlib.reload(config)
 
 import streamlit as st
 from config import get_theme, apply_custom_css, LOGO_PATH, get_logo_base64
@@ -77,7 +74,7 @@ def main():
     st.session_state["username"] = username
 
     if "active_page" not in st.session_state:
-        st.session_state["active_page"] = "dashboard_home"
+        st.session_state["active_page"] = "dashboard_home" if user_role == "admin" else "analisi_sessione_giornata"
 
     counts = utils.get_history_team_counts()
     gym_stats = utils.get_gymaware_summary_stats()
@@ -154,7 +151,7 @@ def main():
             "medie_confronti": "medie_tipologie_fir",
             "analisi_individuale": "gps_atleta",
             "palestra_gymaware": "squadra_ranking",
-            "analisi_drills": "gestione_sessione",
+            "analisi_drills": "sessione",
             "pannello_controllo": "roster",
             "storico_dati": "nazionale",
             "import_dati": "csv_import",
@@ -258,6 +255,25 @@ def main():
             unsafe_allow_html=True,
         )
 
+        if user_role == "admin" and cloud_storage.is_cloud_enabled():
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            if st.button(
+                "🔄 Sincronizza Dati dal Cloud",
+                key="btn_force_cloud_sync",
+                use_container_width=True,
+                help="Riscarica tutti i file aggiornati dal Cloud Supabase e pulisce la cache locale.",
+            ):
+                with st.spinner("Sincronizzazione dal Cloud in corso..."):
+                    sync_res = cloud_storage.sync_remote_to_local(force=True)
+                    st.cache_data.clear()
+                n_dl = len(sync_res.get("downloaded", []))
+                n_err = len(sync_res.get("errors", []))
+                if n_err == 0:
+                    st.toast(f"Cloud sincronizzato ({n_dl} file aggiornati).", icon="✅")
+                else:
+                    st.toast(f"Sync parziale: {n_dl} aggiornati, {n_err} errori.", icon="⚠️")
+                st.rerun()
+
         st.markdown(
             """
             <div style="text-align:center; padding:12px 4px 6px 4px; font-size:0.68rem; color:#94A3B8; opacity:0.85;">
@@ -317,25 +333,30 @@ def main():
     # 8. Pannello di controllo FIR
     elif page == "pannello_controllo":
         if user_role == "admin":
-            importlib.reload(views.pannello_controllo)
             views.pannello_controllo.render_pannello_controllo(t)
         else:
             st.error("⛔ Accesso riservato agli amministratori.")
-    # 8. Storico dati
+    # 9. Storico dati
     elif page == "storico_dati":
-        views.storico_gps.render_storico_gps(t)
-    # 9. Importazione
+        if user_role == "admin":
+            views.storico_gps.render_storico_gps(t)
+        else:
+            st.error("⛔ Accesso riservato agli amministratori.")
+    # 10. Importazione
     elif page == "import_dati":
         if user_role == "admin":
             views.import_dati.render_import_dati(t)
         else:
             st.error("⛔ Accesso riservato agli amministratori.")
-    # 10. Cambio password
+    # 11. Cambio password
     elif page == "cambio_password":
         views.cambio_password.render_cambio_password(t)
-    # Fallback su Home
+    # Fallback
     else:
-        views.dashboard_home.render_dashboard_home(t)
+        if user_role == "admin":
+            views.dashboard_home.render_dashboard_home(t)
+        else:
+            views.home.render_analisi_sessione_giornata(t)
 
     st.markdown(
         """

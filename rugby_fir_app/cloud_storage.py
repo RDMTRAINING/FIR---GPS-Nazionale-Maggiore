@@ -21,11 +21,21 @@ Architettura:
 
 import os
 import json
+import time
+import logging
 import shutil
 import sqlite3
 import tempfile
 from typing import Optional, Dict, Any, Callable, List
 import pandas as pd
+
+_logger = logging.getLogger("fir_cloud")
+_LAST_CLOUD_ERROR: str = ""
+
+
+def get_last_cloud_error() -> str:
+    """Restituisce l'ultimo errore Cloud registrato (stringa vuota se l'ultima operazione è riuscita)."""
+    return _LAST_CLOUD_ERROR
 
 try:
     import streamlit as st
@@ -356,8 +366,12 @@ def download_cloud_object_to_file(remote_key: str, dest_local_path: str) -> bool
 
 
 def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_type: str = "application/octet-stream") -> bool:
-    """Carica (sovrascrive in upsert) un file locale verso il bucket remoto S3/Supabase."""
+    """Carica (sovrascrive in upsert) un file locale verso il bucket remoto S3/Supabase con retry automatico e logging."""
+    global _LAST_CLOUD_ERROR
+    _LAST_CLOUD_ERROR = ""
+
     if not os.path.exists(local_src_path):
+        _LAST_CLOUD_ERROR = f"File locale non trovato: {local_src_path}"
         return False
 
     cfg = get_cloud_config()
@@ -367,38 +381,65 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
     _ensure_bucket_exists(cfg)
     bucket = cfg["bucket_name"]
 
-    if cfg["provider"] == "s3":
-        s3 = get_s3_client()
-        if not s3:
-            return False
-        try:
-            s3.upload_file(
-                local_src_path,
-                bucket,
-                remote_key,
-                ExtraArgs={"ContentType": content_type},
-            )
-            return True
-        except Exception:
+    for attempt in range(2):
+        if cfg["provider"] == "s3":
+            s3 = get_s3_client()
+            if not s3:
+                _LAST_CLOUD_ERROR = "Client S3 non inizializzato"
+                return False
+            try:
+                s3.upload_file(
+                    local_src_path,
+                    bucket,
+                    remote_key,
+                    ExtraArgs={"ContentType": content_type},
+                )
+                return True
+            except Exception as exc:
+                _LAST_CLOUD_ERROR = f"Errore upload S3 ({remote_key}): {exc}"
+                _logger.warning("%s (tentativo %d/2)", _LAST_CLOUD_ERROR, attempt + 1)
+
+        elif cfg["provider"] == "supabase":
+            sb = get_supabase_client()
+            if not sb:
+                _LAST_CLOUD_ERROR = "Client Supabase non inizializzato"
+                return False
+            try:
+                with open(local_src_path, "rb") as f:
+                    data_bytes = f.read()
+                sb.storage.from_(bucket).upload(
+                    path=remote_key,
+                    file=data_bytes,
+                    file_options={"content-type": content_type, "upsert": "true"},
+                )
+                return True
+            except Exception as exc:
+                _LAST_CLOUD_ERROR = f"Errore upload Supabase ({remote_key}): {exc}"
+                _logger.warning("%s (tentativo %d/2)", _LAST_CLOUD_ERROR, attempt + 1)
+        else:
             return False
 
-    elif cfg["provider"] == "supabase":
-        sb = get_supabase_client()
-        if not sb:
-            return False
-        try:
-            with open(local_src_path, "rb") as f:
-                data_bytes = f.read()
-            sb.storage.from_(bucket).upload(
-                path=remote_key,
-                file=data_bytes,
-                file_options={"content-type": content_type, "upsert": "true"},
-            )
-            return True
-        except Exception:
-            return False
+        if attempt == 0:
+            time.sleep(0.6)
 
     return False
+
+
+def pull_single_file_from_cloud(remote_filename: str, local_fallback_path: Optional[str] = None) -> bool:
+    """Scarica l'ultima versione di un singolo file dal Cloud in tmp_data/ (e data/) per prevenire sovrascritture concorrenti."""
+    cfg = get_cloud_config()
+    if not cfg["enabled"]:
+        return False
+    os.makedirs(TMP_DATA_DIR, exist_ok=True)
+    tmp_dest = os.path.join(TMP_DATA_DIR, remote_filename)
+    ok = download_cloud_object_to_file(remote_filename, tmp_dest)
+    if ok and local_fallback_path:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
+            shutil.copy2(tmp_dest, local_fallback_path)
+        except Exception as exc:
+            _logger.warning("Impossibile allineare %s: %s", local_fallback_path, exc)
+    return ok
 
 
 # ==============================================================================
@@ -440,22 +481,28 @@ def sync_remote_to_local(force: bool = False) -> Dict[str, Any]:
     os.makedirs(TMP_DATA_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # Se il marker esiste sul disco locale e non è richiesto force, controlla solo che i parquet base ci siano
-    if not force and os.path.exists(SYNC_MARKER_FILE):
-        gps_tmp = os.path.join(TMP_DATA_DIR, "gps_history.parquet")
-        if os.path.exists(gps_tmp) and os.path.getsize(gps_tmp) > 0:
-            _PROCESS_SYNC_DONE = True
-            return {"status": "already_synced_on_disk", "downloaded": []}
-
-    cfg = get_cloud_config()
-    downloaded = []
-
     all_files = [f"{t}.parquet" for t in MANAGED_PARQUET_TABLES] + MANAGED_JSON_FILES + [
         "rugby_database.sqlite",
         "gymaware_data.parquet",
     ]
 
-    for fname in all_files:
+    # Se il marker esiste su disco e non è richiesto force, verifica comunque eventuali nuovi file mancanti in TMP_DATA_DIR
+    if not force and os.path.exists(SYNC_MARKER_FILE):
+        missing_files = [
+            fn for fn in all_files
+            if not (os.path.exists(os.path.join(TMP_DATA_DIR, fn)) and os.path.getsize(os.path.join(TMP_DATA_DIR, fn)) > 0)
+        ]
+        if not missing_files:
+            _PROCESS_SYNC_DONE = True
+            return {"status": "already_synced_on_disk", "downloaded": []}
+        target_files = missing_files
+    else:
+        target_files = all_files
+
+    cfg = get_cloud_config()
+    downloaded = []
+
+    for fname in target_files:
         tmp_dest = os.path.join(TMP_DATA_DIR, fname)
         data_dest = os.path.join(DATA_DIR, fname)
 
@@ -555,9 +602,10 @@ def load_parquet_with_cloud_sync(table_name: str, local_fallback_path: str) -> p
     fname = f"{table_name}.parquet"
     mirror_path = get_local_mirror_path(fname)
     if os.path.exists(mirror_path):
-        df = query_local_parquet_duckdb(mirror_path)
-        if not df.empty:
-            return df
+        try:
+            return query_local_parquet_duckdb(mirror_path)
+        except Exception as exc:
+            _logger.warning("Errore lettura mirror %s: %s", mirror_path, exc)
 
     if os.path.exists(local_fallback_path):
         return query_local_parquet_duckdb(local_fallback_path)
@@ -607,6 +655,8 @@ def ingest_and_append_remote_parquet(
         sync_remote_to_local(force=False)
 
     fname = f"{table_name}.parquet"
+    # Pull-Before-Write: scarica l'ultima versione remota prima di appendere/unire per prevenire lost update concorrenti
+    pull_single_file_from_cloud(fname, local_fallback_path)
     mirror_path = get_local_mirror_path(fname)
 
     existing_df = pd.DataFrame()
@@ -635,7 +685,10 @@ def ingest_and_append_remote_parquet(
         }
 
     # Salva prima in locale e poi effettua upload_file sul bucket remoto
-    save_parquet_with_cloud_sync(table_name, combined_df, local_fallback_path)
+    cloud_ok = save_parquet_with_cloud_sync(table_name, combined_df, local_fallback_path)
+    result["cloud_ok"] = bool(cloud_ok)
+    if not cloud_ok and get_cloud_config().get("enabled"):
+        result["cloud_error"] = get_last_cloud_error()
     return result
 
 

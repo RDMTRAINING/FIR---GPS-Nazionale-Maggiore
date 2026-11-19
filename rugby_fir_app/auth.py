@@ -1,6 +1,7 @@
 # Copyright 2026 Riccardo Di Maio / M0V3 S.r.l.
 import os
 import json
+import time
 import hashlib
 import secrets
 import smtplib
@@ -14,9 +15,66 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 MAIL_CONFIG_FILE = os.path.join(DATA_DIR, "mail_config.json")
 
+_PBKDF2_PREFIX = "pbkdf2_sha256$"
+_PBKDF2_ITERATIONS = 260_000
+_MAX_LOGIN_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 60
+_LOGIN_FAILURES: Dict[str, Tuple[int, float]] = {}
+
 
 def _hash_pw(password: str, salt: str) -> str:
-    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+    """Genera un hash robusto PBKDF2-HMAC-SHA256 (260.000 iterazioni)."""
+    dk = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        _PBKDF2_ITERATIONS,
+    )
+    return f"{_PBKDF2_PREFIX}{dk.hex()}"
+
+
+def _verify_pw_hash(password: str, salt: str, stored_hash: str) -> Tuple[bool, bool]:
+    """
+    Verifica una password sia su hash PBKDF2 moderno sia su hash SHA-256 legacy.
+    Ritorna (is_valid, needs_upgrade_to_pbkdf2).
+    """
+    if not stored_hash:
+        return False, False
+    if stored_hash.startswith(_PBKDF2_PREFIX):
+        expected = _hash_pw(password, salt)
+        return secrets.compare_digest(stored_hash, expected), False
+    # Retro-compatibilità trasparente per utenti creati con SHA-256 singolo
+    legacy_expected = hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+    if secrets.compare_digest(stored_hash, legacy_expected):
+        return True, True
+    return False, False
+
+
+def get_login_lockout_seconds(username: str) -> int:
+    """Ritorna i secondi residui di blocco anti brute-force per lo username/email (0 se non bloccato)."""
+    key = str(username or "").strip().lower()
+    if not key or key not in _LOGIN_FAILURES:
+        return 0
+    count, last_ts = _LOGIN_FAILURES[key]
+    if count >= _MAX_LOGIN_ATTEMPTS:
+        elapsed = time.time() - last_ts
+        if elapsed < _LOCKOUT_SECONDS:
+            return int(_LOCKOUT_SECONDS - elapsed) + 1
+        _LOGIN_FAILURES.pop(key, None)
+    return 0
+
+
+def _read_secret_or_env(key_name: str, default: str = "") -> str:
+    val = os.environ.get(key_name)
+    if val:
+        return str(val).strip()
+    try:
+        import streamlit as _st
+        if key_name in _st.secrets:
+            return str(_st.secrets[key_name]).strip()
+    except Exception:
+        pass
+    return default
 
 
 def generate_temp_password(prefix: str = "Fir2026") -> str:
@@ -46,6 +104,23 @@ def get_mail_config() -> Dict:
                 default_config.update(saved)
         except Exception:
             pass
+    # Priorità a st.secrets / variabili d'ambiente per credenziali SMTP sensibili (evita password in chiaro su disco)
+    env_host = _read_secret_or_env("SMTP_HOST")
+    env_user = _read_secret_or_env("SMTP_USER")
+    env_pw = _read_secret_or_env("SMTP_PASSWORD")
+    env_port = _read_secret_or_env("SMTP_PORT")
+    env_sender = _read_secret_or_env("SMTP_SENDER_EMAIL")
+    if env_host:
+        default_config["smtp_host"] = env_host
+        default_config["smtp_enabled"] = True
+    if env_user:
+        default_config["smtp_user"] = env_user
+    if env_pw:
+        default_config["smtp_password"] = env_pw
+    if env_port.isdigit():
+        default_config["smtp_port"] = int(env_port)
+    if env_sender:
+        default_config["sender_email"] = env_sender
     return default_config
 
 
@@ -155,12 +230,14 @@ def send_smtp_email(to_email: str, subject: str, body_text: str) -> Tuple[bool, 
 
 
 def init_auth():
-    """Inizializza il file degli utenti se non esiste, creando l'amministratore e un profilo staff di default."""
+    """Inizializza il file degli utenti se non esiste, usando credenziali da st.secrets/env o password temporanee casuali."""
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(USERS_FILE):
         salt_admin = secrets.token_hex(16)
         salt_staff = secrets.token_hex(16)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        init_admin_pw = _read_secret_or_env("DEFAULT_ADMIN_PASSWORD") or generate_temp_password("FirAdmin")
+        init_staff_pw = _read_secret_or_env("DEFAULT_STAFF_PASSWORD") or generate_temp_password("FirStaff")
 
         default_users = [
             {
@@ -169,7 +246,7 @@ def init_auth():
                 "full_name": "Amministratore FIR",
                 "role": "admin",  # 'admin' o 'viewer'
                 "salt": salt_admin,
-                "password_hash": _hash_pw("fir_admin_2026", salt_admin),
+                "password_hash": _hash_pw(init_admin_pw, salt_admin),
                 "created_at": now_str,
                 "last_login": None,
                 "is_primary": True,
@@ -182,11 +259,11 @@ def init_auth():
                 "full_name": "Staff Tecnico Federale",
                 "role": "viewer",
                 "salt": salt_staff,
-                "password_hash": _hash_pw("fir_staff_2026", salt_staff),
+                "password_hash": _hash_pw(init_staff_pw, salt_staff),
                 "created_at": now_str,
                 "last_login": None,
                 "is_primary": False,
-                "must_change_password": False,
+                "must_change_password": True,
                 "has_accepted_terms": False,
             },
         ]
@@ -225,28 +302,35 @@ def _save_users(users: List[Dict]):
 
 def verify_user(username: str, password: str) -> Optional[Dict]:
     """
-    Verifica le credenziali di accesso.
-    Consente l'accesso inserendo indifferentemente lo Username o l'Indirizzo Email.
-    Se corrette restituisce i dati utente e aggiorna last_login.
+    Verifica le credenziali di accesso con protezione anti brute-force,
+    pull fresco di `users.json` dal Cloud e upgrade trasparente SHA-256 -> PBKDF2.
     """
     u_clean = username.strip().lower()
     pw_clean = password.strip()
     if not u_clean or not pw_clean:
         return None
 
+    if get_login_lockout_seconds(u_clean) > 0:
+        return None
+
+    # Pull-Before-Write su users.json per leggere eventuali cambi password recenti fatti online
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     matched = None
     for u in users:
         curr_u = str(u.get("username") or "").strip().lower()
         curr_e = str(u.get("email") or "").strip().lower()
         if curr_u == u_clean or curr_e == u_clean:
-            expected_hash = _hash_pw(pw_clean, u["salt"])
-            if secrets.compare_digest(u["password_hash"], expected_hash):
+            ok_pw, needs_upgrade = _verify_pw_hash(pw_clean, u["salt"], u.get("password_hash", ""))
+            if ok_pw:
                 matched = u
+                if needs_upgrade:
+                    u["password_hash"] = _hash_pw(pw_clean, u["salt"])
                 u["last_login"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 break
 
     if matched:
+        _LOGIN_FAILURES.pop(u_clean, None)
         _save_users(users)
         return {
             "username": matched["username"],
@@ -259,6 +343,9 @@ def verify_user(username: str, password: str) -> Optional[Dict]:
             "must_change_password": matched.get("must_change_password", False),
             "has_accepted_terms": bool(matched.get("has_accepted_terms", False)),
         }
+
+    prev_cnt, _ = _LOGIN_FAILURES.get(u_clean, (0, 0.0))
+    _LOGIN_FAILURES[u_clean] = (prev_cnt + 1, time.time())
     return None
 
 
@@ -292,6 +379,7 @@ def create_user(
     if role not in ("admin", "viewer"):
         return False, "Ruolo non valido (seleziona Amministratore o Visualizzatore)."
 
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u.get("username", "").lower() == u_clean:
@@ -392,10 +480,12 @@ def change_user_password(username: str, old_password: str, new_password: str) ->
     if pw_old == pw_new:
         return False, "La nuova password deve essere diversa dalla precedente."
 
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
-            if not secrets.compare_digest(u["password_hash"], _hash_pw(pw_old, u["salt"])):
+            ok_pw, _ = _verify_pw_hash(pw_old, u["salt"], u.get("password_hash", ""))
+            if not ok_pw:
                 return False, "La password attuale non è corretta."
             new_salt = secrets.token_hex(16)
             u["salt"] = new_salt
@@ -414,6 +504,7 @@ def admin_reset_password(username: str, new_password: str) -> Tuple[bool, str]:
     if not pw_new or len(pw_new) < 6:
         return False, "La password deve contenere almeno 6 caratteri."
 
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
@@ -432,6 +523,7 @@ def admin_reset_password_auto(username: str, must_change_password: bool = True) 
     u_clean = username.strip().lower()
     temp_pw = generate_temp_password()
 
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
@@ -450,6 +542,7 @@ def admin_update_user_role(username: str, new_role: str) -> Tuple[bool, str]:
     if new_role not in ("admin", "viewer"):
         return False, "Ruolo non valido."
     u_clean = username.strip().lower()
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
@@ -469,6 +562,7 @@ def admin_delete_user(username: str, current_username: str) -> Tuple[bool, str]:
     if u_clean == c_clean:
         return False, "Non puoi eliminare il tuo stesso account mentre sei autenticato."
 
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
@@ -486,6 +580,7 @@ def admin_delete_user(username: str, current_username: str) -> Tuple[bool, str]:
 def accept_terms(username: str) -> bool:
     """Aggiorna il flag has_accepted_terms a True e registra il timestamp di accettazione nel database utenti."""
     u_clean = username.strip().lower()
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:
@@ -499,6 +594,7 @@ def accept_terms(username: str) -> bool:
 def reset_terms_acceptance(username: str) -> bool:
     """Permette all'amministratore di richiedere una nuova accettazione dei termini a un utente."""
     u_clean = username.strip().lower()
+    cloud_storage.pull_single_file_from_cloud("users.json", USERS_FILE)
     users = get_users()
     for u in users:
         if u["username"].lower() == u_clean or u.get("email", "").lower() == u_clean:

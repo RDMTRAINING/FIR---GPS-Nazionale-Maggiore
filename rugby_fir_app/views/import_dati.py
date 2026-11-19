@@ -349,8 +349,8 @@ def _render_sub_csv_import(t: dict):
             key="imp_sample_sel",
         )
         custom_path = c_l2.text_input(
-            "Oppure incolla il percorso completo del file sul tuo Mac:",
-            placeholder="es. /Users/riccardodimaio/Downloads/RDM-7.csv",
+            "Oppure incolla il percorso locale del file CSV:",
+            placeholder="es. RDM-7.csv",
             key="imp_custom_path",
         ).strip()
 

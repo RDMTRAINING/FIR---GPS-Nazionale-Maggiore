@@ -1219,6 +1219,14 @@ def session_exists_in_drills(session_date: str, session_name: str) -> int:
     return int(mask.sum())
 
 
+_LAST_SAVE_CLOUD_OK: bool = True
+
+
+def get_last_save_cloud_ok() -> bool:
+    """Restituisce True se l'ultimo salvataggio drills è stato caricato correttamente anche su Cloud Storage."""
+    return _LAST_SAVE_CLOUD_OK
+
+
 def upsert_session_drills(
     session_date: str,
     session_name: str,
@@ -1231,13 +1239,21 @@ def upsert_session_drills(
       - `drills_master.parquet`
       - `drills_roles_summary.parquet`
       - `drills_players_detail.parquet`
-    con sincronizzazione Cloud Storage e `st.cache_data.clear()`.
+    con Pull-Before-Write, sincronizzazione Cloud Storage e `st.cache_data.clear()`.
     """
+    global _LAST_SAVE_CLOUD_OK
     os.makedirs(DATA_DIR, exist_ok=True)
     s_date = str(session_date).strip()[:10]
     s_name = str(session_name).strip()
     s_name_norm = s_name.lower()
     now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Pull-Before-Write dal Cloud per evitare di sovrascrivere salvataggi concorrenti
+    cloud_storage.pull_single_file_from_cloud("drills_master.parquet", DRILLS_MASTER_PATH)
+    cloud_storage.pull_single_file_from_cloud("drills_roles_summary.parquet", DRILLS_ROLES_PATH)
+    cloud_storage.pull_single_file_from_cloud("drills_players_detail.parquet", DRILLS_PLAYERS_PATH)
+
+    cloud_ok_all = True
 
     # 1. Upsert drills_master.parquet
     df_existing = _load_drills_master_uncached()
@@ -1274,7 +1290,8 @@ def upsert_session_drills(
         by=["Session_Date", "Session_Name", "Drill_Order"],
         ascending=[False, True, True],
     ).reset_index(drop=True)
-    cloud_storage.save_parquet_with_cloud_sync("drills_master", df_merged, DRILLS_MASTER_PATH)
+    ok_m = cloud_storage.save_parquet_with_cloud_sync("drills_master", df_merged, DRILLS_MASTER_PATH)
+    cloud_ok_all = cloud_ok_all and bool(ok_m)
 
     # 2. Upsert drills_roles_summary.parquet
     df_r_existing = _load_drills_roles_uncached()
@@ -1300,9 +1317,11 @@ def upsert_session_drills(
             r_rows.append(rrow)
         df_r_new = pd.DataFrame(r_rows, columns=DRILLS_ROLES_COLUMNS)
         df_r_merged = pd.concat([df_r_existing, df_r_new], ignore_index=True) if not df_r_existing.empty else df_r_new
-        cloud_storage.save_parquet_with_cloud_sync("drills_roles_summary", df_r_merged, DRILLS_ROLES_PATH)
+        ok_r = cloud_storage.save_parquet_with_cloud_sync("drills_roles_summary", df_r_merged, DRILLS_ROLES_PATH)
+        cloud_ok_all = cloud_ok_all and bool(ok_r)
     elif removed_count > 0:
-        cloud_storage.save_parquet_with_cloud_sync("drills_roles_summary", df_r_existing, DRILLS_ROLES_PATH)
+        ok_r = cloud_storage.save_parquet_with_cloud_sync("drills_roles_summary", df_r_existing, DRILLS_ROLES_PATH)
+        cloud_ok_all = cloud_ok_all and bool(ok_r)
 
     # 3. Upsert drills_players_detail.parquet
     df_p_existing = _load_drills_players_uncached()
@@ -1329,9 +1348,13 @@ def upsert_session_drills(
             p_rows.append(prow)
         df_p_new = pd.DataFrame(p_rows, columns=DRILLS_PLAYERS_COLUMNS)
         df_p_merged = pd.concat([df_p_existing, df_p_new], ignore_index=True) if not df_p_existing.empty else df_p_new
-        cloud_storage.save_parquet_with_cloud_sync("drills_players_detail", df_p_merged, DRILLS_PLAYERS_PATH)
+        ok_p = cloud_storage.save_parquet_with_cloud_sync("drills_players_detail", df_p_merged, DRILLS_PLAYERS_PATH)
+        cloud_ok_all = cloud_ok_all and bool(ok_p)
     elif removed_count > 0:
-        cloud_storage.save_parquet_with_cloud_sync("drills_players_detail", df_p_existing, DRILLS_PLAYERS_PATH)
+        ok_p = cloud_storage.save_parquet_with_cloud_sync("drills_players_detail", df_p_existing, DRILLS_PLAYERS_PATH)
+        cloud_ok_all = cloud_ok_all and bool(ok_p)
+
+    _LAST_SAVE_CLOUD_OK = cloud_ok_all
 
     if st is not None:
         st.cache_data.clear()
@@ -1341,8 +1364,13 @@ def upsert_session_drills(
 
 def delete_session_drills(session_date: str, session_name: str) -> int:
     """Elimina tutti i drill associati a una specifica (Session_Date, Session_Name) su tutti e 3 i file Parquet."""
+    global _LAST_SAVE_CLOUD_OK
     s_date = str(session_date).strip()[:10]
     s_name_norm = str(session_name).strip().lower()
+
+    cloud_storage.pull_single_file_from_cloud("drills_master.parquet", DRILLS_MASTER_PATH)
+    cloud_storage.pull_single_file_from_cloud("drills_roles_summary.parquet", DRILLS_ROLES_PATH)
+    cloud_storage.pull_single_file_from_cloud("drills_players_detail.parquet", DRILLS_PLAYERS_PATH)
 
     df_existing = _load_drills_master_uncached()
     if df_existing.empty:
@@ -1355,7 +1383,7 @@ def delete_session_drills(session_date: str, session_name: str) -> int:
         return 0
 
     df_clean = df_existing.loc[~mask_old].reset_index(drop=True)
-    cloud_storage.save_parquet_with_cloud_sync("drills_master", df_clean, DRILLS_MASTER_PATH)
+    cloud_ok_all = bool(cloud_storage.save_parquet_with_cloud_sync("drills_master", df_clean, DRILLS_MASTER_PATH))
 
     for tbl_name, path_val, loader in [
         ("drills_roles_summary", DRILLS_ROLES_PATH, _load_drills_roles_uncached),
@@ -1366,7 +1394,10 @@ def delete_session_drills(session_date: str, session_name: str) -> int:
             mask_s = (df_sub["Session_Date"].astype(str).str.slice(0, 10) == s_date) & (
                 df_sub["Session_Name"].astype(str).str.strip().str.lower() == s_name_norm
             )
-            cloud_storage.save_parquet_with_cloud_sync(tbl_name, df_sub.loc[~mask_s].reset_index(drop=True), path_val)
+            ok_sub = cloud_storage.save_parquet_with_cloud_sync(tbl_name, df_sub.loc[~mask_s].reset_index(drop=True), path_val)
+            cloud_ok_all = cloud_ok_all and bool(ok_sub)
+
+    _LAST_SAVE_CLOUD_OK = cloud_ok_all
 
     if st is not None:
         st.cache_data.clear()
