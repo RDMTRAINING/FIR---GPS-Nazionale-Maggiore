@@ -12,14 +12,14 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from reportlab.graphics.shapes import Circle, Drawing, PolyLine
+from reportlab.graphics.shapes import Circle, Drawing, Polygon, PolyLine
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 import utils
-from config import LOGO_PATH, render_action_bar, render_page_header
+from config import LOGO_PATH, render_action_bar, render_page_header, render_tab_navigation
 from pdf_generator import _build_fir_header_table, _build_pdf_with_footer, slugify_name
 
 
@@ -426,6 +426,242 @@ def crea_pdf_peso_corporeo(
     return buffer.getvalue()
 
 
+def _compute_two_date_comparison(
+    df_weights: pd.DataFrame,
+    selected_players: List[str],
+    start_date_str: str,
+    end_date_str: str,
+) -> List[Dict[str, Any]]:
+    """
+    Per ogni giocatore selezionato, trova il peso registrato con data più vicina a `start_date_str`
+    e il peso registrato con data più vicina a `end_date_str`, calcolando delta kg, delta % e direzione.
+    """
+    if df_weights.empty or not selected_players:
+        return []
+
+    target_start = pd.to_datetime(start_date_str)
+    target_end = pd.to_datetime(end_date_str)
+
+    sub = df_weights[df_weights["player_name"].isin(selected_players)].copy()
+    if sub.empty:
+        return []
+
+    sub["_dt"] = pd.to_datetime(sub["date_str"], errors="coerce")
+    sub = sub[sub["_dt"].notna()].copy()
+
+    rows: List[Dict[str, Any]] = []
+    for pname in sorted(set(selected_players)):
+        p_df = sub[sub["player_name"] == pname].sort_values("_dt")
+        if p_df.empty:
+            continue
+
+        # Più vicino a Data Inizio (a parità di distanza, preferisce la data precedente)
+        p_df["_dist_start"] = (p_df["_dt"] - target_start).abs()
+        start_row = p_df.sort_values(["_dist_start", "_dt"], ascending=[True, True]).iloc[0]
+
+        # Più vicino a Data Fine (a parità di distanza, preferisce la data successiva)
+        p_df["_dist_end"] = (p_df["_dt"] - target_end).abs()
+        end_row = p_df.sort_values(["_dist_end", "_dt"], ascending=[True, False]).iloc[0]
+
+        w_start = float(start_row["weight_kg"])
+        w_end = float(end_row["weight_kg"])
+        diff_kg = round(w_end - w_start, 2)
+        diff_pct = ((w_end - w_start) / w_start) * 100.0 if w_start > 0 else 0.0
+
+        if diff_kg > 0.05:
+            direction = "up"
+        elif diff_kg < -0.05:
+            direction = "down"
+        else:
+            direction = "flat"
+
+        rows.append(
+            {
+                "player_name": pname,
+                "start_date_actual": str(start_row["date_str"]),
+                "start_weight_kg": w_start,
+                "end_date_actual": str(end_row["date_str"]),
+                "end_weight_kg": w_end,
+                "diff_kg": diff_kg,
+                "diff_pct": diff_pct,
+                "direction": direction,
+            }
+        )
+    return rows
+
+
+def _render_two_date_comparison_html(
+    comp_rows: List[Dict[str, Any]],
+    start_disp: str,
+    end_disp: str,
+) -> str:
+    ths = (
+        "<th style='background:#002B49; color:#FFFFFF; text-align:left; padding:10px 12px;'>Atleta</th>"
+        f"<th style='background:#002B49; color:#FFFFFF; text-align:center; padding:10px 10px;'>Peso Iniziale<br><span style='font-weight:400; font-size:0.68rem; color:#CBD5E1;'>vicino al {start_disp}</span></th>"
+        f"<th style='background:#002B49; color:#FFFFFF; text-align:center; padding:10px 10px;'>Peso Finale<br><span style='font-weight:400; font-size:0.68rem; color:#CBD5E1;'>vicino al {end_disp}</span></th>"
+        "<th style='background:#002B49; color:#FFFFFF; text-align:center; padding:10px 10px;'>Direzione</th>"
+        "<th style='background:#002B49; color:#FFFFFF; text-align:center; padding:10px 10px;'>Differenza (kg)</th>"
+        "<th style='background:#002B49; color:#FFFFFF; text-align:center; padding:10px 10px;'>Differenza (%)</th>"
+    )
+    trs = []
+    for idx, r in enumerate(comp_rows):
+        bg = "#FFFFFF" if idx % 2 == 0 else "#F8FAFC"
+        d_dir = r["direction"]
+        diff_kg = float(r["diff_kg"])
+        diff_pct = float(r["diff_pct"])
+        sign = "+" if diff_kg > 0 else ""
+
+        if d_dir == "up":
+            arrow_html = (
+                "<span style='display:inline-flex; align-items:center; justify-content:center; "
+                "width:32px; height:32px; border-radius:999px; background:#DCFCE7; color:#15803D; "
+                "font-size:1.25rem; font-weight:900; border:1.5px solid #22C55E;' title='Peso in aumento'>&#9650;</span>"
+            )
+            badge_bg, badge_col, badge_bd = "#DCFCE7", "#166534", "#86EFAC"
+            arrow_txt = "&#9650;"
+        elif d_dir == "down":
+            arrow_html = (
+                "<span style='display:inline-flex; align-items:center; justify-content:center; "
+                "width:32px; height:32px; border-radius:999px; background:#FEE2E2; color:#B91C1C; "
+                "font-size:1.25rem; font-weight:900; border:1.5px solid #EF4444;' title='Peso in calo'>&#9660;</span>"
+            )
+            badge_bg, badge_col, badge_bd = "#FEE2E2", "#991B1B", "#FCA5A5"
+            arrow_txt = "&#9660;"
+        else:
+            arrow_html = (
+                "<span style='display:inline-flex; align-items:center; justify-content:center; "
+                "width:32px; height:32px; border-radius:999px; background:#F1F5F9; color:#475569; "
+                "font-size:1.05rem; font-weight:900; border:1.5px solid #CBD5E1;' title='Peso stabile'>=</span>"
+            )
+            badge_bg, badge_col, badge_bd = "#F1F5F9", "#475569", "#CBD5E1"
+            arrow_txt = "="
+
+        trs.append(
+            f"<tr style='background:{bg}; border-bottom:1px solid #E2E8F0;'>"
+            f"<td style='padding:9px 12px; font-weight:800; color:#0F172A;'>{r['player_name']}</td>"
+            f"<td style='padding:8px 10px; text-align:center;'>"
+            f"  <div style='font-weight:800; font-size:0.95rem; color:#0F172A;'>{r['start_weight_kg']:.1f} kg</div>"
+            f"  <div style='font-size:0.70rem; color:#64748B;'>{_fmt_date_it(r['start_date_actual'])}</div>"
+            f"</td>"
+            f"<td style='padding:8px 10px; text-align:center;'>"
+            f"  <div style='font-weight:800; font-size:0.95rem; color:#0F172A;'>{r['end_weight_kg']:.1f} kg</div>"
+            f"  <div style='font-size:0.70rem; color:#64748B;'>{_fmt_date_it(r['end_date_actual'])}</div>"
+            f"</td>"
+            f"<td style='padding:8px 10px; text-align:center;'>{arrow_html}</td>"
+            f"<td style='padding:8px 10px; text-align:center;'>"
+            f"  <span style='background:{badge_bg}; color:{badge_col}; border:1px solid {badge_bd}; font-weight:900; font-size:0.88rem; padding:4px 10px; border-radius:6px;'>{arrow_txt} {sign}{diff_kg:.1f} kg</span>"
+            f"</td>"
+            f"<td style='padding:8px 10px; text-align:center;'>"
+            f"  <span style='background:{badge_bg}; color:{badge_col}; border:1px solid {badge_bd}; font-weight:900; font-size:0.88rem; padding:4px 10px; border-radius:6px;'>{arrow_txt} {sign}{diff_pct:.1f}%</span>"
+            f"</td>"
+            "</tr>"
+        )
+
+    return (
+        "<div style='overflow-x:auto; border:1px solid #CBD5E1; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.04);'>"
+        "<table style='width:100%; border-collapse:collapse; font-family:Inter,system-ui,sans-serif; font-size:0.86rem;'>"
+        f"<thead><tr>{ths}</tr></thead>"
+        f"<tbody>{''.join(trs)}</tbody>"
+        "</table></div>"
+    )
+
+
+def _build_rl_arrow_drawing(direction: str, size: int = 14) -> Drawing:
+    d = Drawing(size, size)
+    if direction == "up":
+        d.add(Polygon([2, 2, size - 2, 2, size / 2.0, size - 2], fillColor=colors.HexColor("#16A34A"), strokeColor=colors.HexColor("#15803D"), strokeWidth=0.6))
+    elif direction == "down":
+        d.add(Polygon([2, size - 2, size - 2, size - 2, size / 2.0, 2], fillColor=colors.HexColor("#DC2626"), strokeColor=colors.HexColor("#B91C1C"), strokeWidth=0.6))
+    else:
+        d.add(Circle(size / 2.0, size / 2.0, 3.2, fillColor=colors.HexColor("#64748B"), strokeColor=None))
+    return d
+
+
+def crea_pdf_confronto_2_date(comp_rows: List[Dict[str, Any]], meta_info: Dict[str, str]) -> bytes:
+    """Esporta in PDF A4 il confronto pesi tra 2 date con frecce vettoriali su/giù."""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=20,
+        rightMargin=20,
+        topMargin=16,
+        bottomMargin=24,
+    )
+    styles = getSampleStyleSheet()
+    elements: List[Any] = []
+
+    elements.append(
+        _build_fir_header_table(
+            "Confronto Peso Corporeo (2 Date)",
+            f"Target: {meta_info.get('target_label', 'Roster')} • {meta_info.get('start_disp', '')} -> {meta_info.get('end_disp', '')}",
+            f"Ultimo Peso: {meta_info.get('latest_date_disp', '--')}",
+            f"Atleti: {len(comp_rows)}",
+            total_width=555,
+        )
+    )
+    elements.append(Spacer(1, 8))
+
+    if not comp_rows:
+        elements.append(Paragraph("Nessun peso disponibile per il confronto.", styles["Normal"]))
+        _build_pdf_with_footer(doc, elements)
+        return buffer.getvalue()
+
+    p_hdr = ParagraphStyle("c2_hdr", fontName="Helvetica-Bold", fontSize=8.0, textColor=colors.white, alignment=1, leading=9.5)
+    p_hdr_l = ParagraphStyle("c2_hdr_l", fontName="Helvetica-Bold", fontSize=8.0, textColor=colors.white, alignment=0, leading=9.5)
+    p_name = ParagraphStyle("c2_name", fontName="Helvetica-Bold", fontSize=8.2, textColor=colors.HexColor("#0F172A"), leading=10)
+    p_cell = ParagraphStyle("c2_cell", fontName="Helvetica", fontSize=8.0, textColor=colors.HexColor("#0F172A"), alignment=1, leading=9.5)
+
+    rows: List[List[Any]] = [
+        [
+            Paragraph("Atleta", p_hdr_l),
+            Paragraph(f"Peso Iniziale<br/>({meta_info.get('start_disp', '')})", p_hdr),
+            Paragraph(f"Peso Finale<br/>({meta_info.get('end_disp', '')})", p_hdr),
+            Paragraph("Trend", p_hdr),
+            Paragraph("Diff. (kg)", p_hdr),
+            Paragraph("Diff. (%)", p_hdr),
+        ]
+    ]
+
+    for r in comp_rows:
+        d_dir = r["direction"]
+        diff_kg = float(r["diff_kg"])
+        diff_pct = float(r["diff_pct"])
+        sign = "+" if diff_kg > 0 else ""
+        col_hex = "#15803D" if d_dir == "up" else ("#B91C1C" if d_dir == "down" else "#475569")
+
+        rows.append(
+            [
+                Paragraph(r["player_name"], p_name),
+                Paragraph(f"<b>{r['start_weight_kg']:.1f} kg</b><br/><font size='6.5' color='#64748B'>{_fmt_date_it(r['start_date_actual'])}</font>", p_cell),
+                Paragraph(f"<b>{r['end_weight_kg']:.1f} kg</b><br/><font size='6.5' color='#64748B'>{_fmt_date_it(r['end_date_actual'])}</font>", p_cell),
+                _build_rl_arrow_drawing(d_dir, size=14),
+                Paragraph(f"<b><font color='{col_hex}'>{sign}{diff_kg:.1f} kg</font></b>", p_cell),
+                Paragraph(f"<b><font color='{col_hex}'>{sign}{diff_pct:.1f}%</font></b>", p_cell),
+            ]
+        )
+
+    col_widths = [145, 100, 100, 42, 84, 84]
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#002B49")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CBD5E1")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F8FAFC")]),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    elements.append(tbl)
+    _build_pdf_with_footer(doc, elements)
+    return buffer.getvalue()
+
+
 def _fmt_date_it(iso_str: str) -> str:
     try:
         return pd.to_datetime(iso_str).strftime("%d/%m/%Y")
@@ -572,7 +808,15 @@ def render_peso_corporeo(t: dict):
     c_k1.metric("Atleti con Pesi in Archivio", f"{total_athletes_db}")
     c_k2.metric("Misurazioni Totali Salvate", f"{len(df_weights):,}")
 
-    # Selettori Target & Periodo
+    active_pw_tab = render_tab_navigation(
+        "peso_corporeo",
+        [
+            ("storico", "Storico & Gestione Pesi", "bi-table"),
+            ("confronto_2_date", "Confronto 2 Date", "bi-arrow-left-right"),
+        ],
+    )
+
+    # Selettori Target (condivisi tra entrambe le sottopagine)
     all_weight_players = sorted(df_weights["player_name"].unique().tolist()) if not df_weights.empty else []
     roster_names = sorted(players_df["name_display"].dropna().astype(str).str.strip().unique().tolist()) if not players_df.empty else []
     combined_player_options = sorted(set(all_weight_players) | set(roster_names))
@@ -618,9 +862,67 @@ def render_peso_corporeo(t: dict):
             selected_players = [sel_single]
             target_label = sel_single
 
-    # Periodo
     ref_max_dt = pd.to_datetime(latest_date_iso).date() if latest_date_iso else datetime.date.today()
     ref_min_dt = pd.to_datetime(str(df_weights["date_str"].min())).date() if not df_weights.empty else ref_max_dt
+
+    # =========================================================================
+    # SOTTOPAGINA 2: CONFRONTO 2 DATE (SOLA VISUALIZZAZIONE)
+    # =========================================================================
+    if active_pw_tab == "confronto_2_date":
+        d_c1, d_c2 = st.columns(2)
+        default_d0 = max(ref_min_dt, ref_max_dt - datetime.timedelta(days=14))
+        c2_d0 = d_c1.date_input("2. Data di Inizio:", value=default_d0, key="pw_c2_d0")
+        c2_d1 = d_c2.date_input("3. Data di Fine:", value=ref_max_dt, key="pw_c2_d1")
+        if c2_d0 > c2_d1:
+            c2_d0, c2_d1 = c2_d1, c2_d0
+
+        c2_d0_str = c2_d0.strftime("%Y-%m-%d")
+        c2_d1_str = c2_d1.strftime("%Y-%m-%d")
+        c2_d0_disp = c2_d0.strftime("%d/%m/%Y")
+        c2_d1_disp = c2_d1.strftime("%d/%m/%Y")
+
+        comp_rows = _compute_two_date_comparison(df_weights, selected_players, c2_d0_str, c2_d1_str)
+
+        render_action_bar(
+            meta_items=[
+                ("ULTIMO PESO", latest_date_disp),
+                ("TARGET", target_label),
+                ("DATA INIZIO", c2_d0_disp),
+                ("DATA FINE", c2_d1_disp),
+            ],
+            pdf_options={"Report Confronto Pesi (2 Date)": "confronto_2_date"},
+            pdf_key=f"pw_c2_pdf_{target_mode}_{c2_d0_str}_{c2_d1_str}",
+            generate_fn=lambda _: crea_pdf_confronto_2_date(
+                comp_rows,
+                meta_info={
+                    "target_label": target_label,
+                    "start_disp": c2_d0_disp,
+                    "end_disp": c2_d1_disp,
+                    "latest_date_disp": latest_date_disp,
+                },
+            ),
+            filename_fn=lambda _: f"FIR_Confronto_Pesi_{slugify_name(target_label)}_{c2_d0_str}_{c2_d1_str}.pdf",
+        )
+
+        if not comp_rows:
+            st.info(f"Nessun peso disponibile per **{target_label}**.")
+            return
+
+        n_up = sum(1 for r in comp_rows if r["direction"] == "up")
+        n_down = sum(1 for r in comp_rows if r["direction"] == "down")
+        n_flat = sum(1 for r in comp_rows if r["direction"] == "flat")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Atleti Confrontati", f"{len(comp_rows)}")
+        m2.metric("▲ In Aumento", f"{n_up}")
+        m3.metric("▼ In Calo", f"{n_down}")
+        m4.metric("= Stabili", f"{n_flat}")
+
+        st.markdown(_render_two_date_comparison_html(comp_rows, c2_d0_disp, c2_d1_disp), unsafe_allow_html=True)
+        return
+
+    # =========================================================================
+    # SOTTOPAGINA 1: STORICO COMPLETO, IMPORT CSV & GESTIONE SMART
+    # =========================================================================
 
     p_col1, p_col2, p_col3 = st.columns([1.6, 1.0, 1.0])
     preset_opts = [
