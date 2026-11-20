@@ -1402,13 +1402,11 @@ def _render_cloud_storage_status_bar():
             )
         with c_st2:
             if st.button("🔄 Sincronizza Bucket", key="btn_import_force_cloud_sync", use_container_width=True):
-                with st.spinner("Sincronizzazione di tutti i file Parquet, SQLite e JSON sul Cloud Bucket..."):
-                    res = cloud_storage.sync_all_local_data_to_cloud()
+                with st.spinner("Aggiornamento dati dal Cloud Bucket..."):
+                    res = cloud_storage.sync_remote_to_local(force=True)
                     utils._clear_all_table_caches()
-                if res.get("ok"):
-                    st.success(f"Sincronizzati {len(res.get('uploaded', []))} file sul bucket '{bucket_lbl}'.")
-                else:
-                    st.warning(f"Caricati {len(res.get('uploaded', []))} file. Errori: {res.get('errors')}")
+                dl = res.get("downloaded", [])
+                st.success(f"Sincronizzati {len(dl)} file dal bucket '{bucket_lbl}'.")
     else:
         st.markdown(
             '<div style="background:#FFFBEB; border:1px solid #F59E0B; border-radius:8px; padding:8px 14px; margin-bottom:12px;">'

@@ -86,6 +86,16 @@ MANAGED_PARQUET_TABLES: List[str] = [
     "drills_roles_summary",
 ]
 
+# Tabelle anagrafiche/convocati/formazioni critiche: mai sovrascritte da boot/bulk sync
+# e sempre sottoposte a snapshot di backup automatico sul Cloud prima di ogni modifica.
+PROTECTED_ROSTER_TABLES = {
+    "camps",
+    "camp_players",
+    "matches",
+    "match_lineups",
+    "players",
+}
+
 MANAGED_JSON_FILES: List[str] = [
     "fir_session_types.json",
     "session_player_status.json",
@@ -526,15 +536,15 @@ def sync_remote_to_local(force: bool = False) -> Dict[str, Any]:
                 except Exception:
                     pass
 
-        # Se non era presente sul Cloud (o Cloud disabilitato), usa la copia di baseline in data/
+        # Se non era presente sul Cloud (o download fallito), usa la copia di baseline in data/ SOLO localmente.
+        # MAI sovrascrivere il Cloud con data/ durante il boot sync, per evitare di ripristinare baseline Git obsolete.
         if not pulled and os.path.exists(data_dest):
             try:
                 shutil.copy2(data_dest, tmp_dest)
             except Exception:
                 pass
             if cfg["enabled"]:
-                ctype = "application/json" if fname.endswith(".json") else "application/octet-stream"
-                upload_file_to_cloud_object(data_dest, fname, content_type=ctype)
+                _logger.warning("Download Cloud fallito o assente per %s: uso fallback locale senza sovrascrivere il Cloud.", fname)
 
     # Allinea la tabella SQLite GymAware dal parquet scaricato se più aggiornato
     try:
@@ -618,6 +628,27 @@ def load_parquet_with_cloud_sync(table_name: str, local_fallback_path: str) -> p
     return pd.DataFrame()
 
 
+def _backup_protected_table_on_cloud(table_name: str, fname: str) -> None:
+    """Salva uno snapshot della versione Cloud corrente prima di sovrascrivere una tabella protetta."""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prev_local = os.path.join(tmpdir, fname)
+            if download_cloud_object_to_file(fname, prev_local):
+                upload_file_to_cloud_object(
+                    prev_local,
+                    f"backups/{table_name}_prev.parquet",
+                    content_type="application/octet-stream",
+                )
+                day_tag = time.strftime("%Y%m%d")
+                upload_file_to_cloud_object(
+                    prev_local,
+                    f"backups/{table_name}_{day_tag}.parquet",
+                    content_type="application/octet-stream",
+                )
+    except Exception as exc:
+        _logger.warning("Snapshot backup Cloud fallito per %s: %s", table_name, exc)
+
+
 def save_parquet_with_cloud_sync(table_name: str, df: pd.DataFrame, local_fallback_path: str) -> bool:
     """
     Logica Write-Through per Data Ingestion / Modifica Tabelle:
@@ -629,6 +660,17 @@ def save_parquet_with_cloud_sync(table_name: str, df: pd.DataFrame, local_fallba
     os.makedirs(TMP_DATA_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(local_fallback_path)), exist_ok=True)
 
+    # Protezione anti-cancellazione accidentale per tabelle convocati/formazioni/roster
+    if table_name in PROTECTED_ROSTER_TABLES and (df is None or df.empty):
+        existing_ref = mirror_path if os.path.exists(mirror_path) else local_fallback_path
+        if os.path.exists(existing_ref) and os.path.getsize(existing_ref) > 0:
+            _logger.error("Bloccato salvataggio DataFrame vuoto su tabella protetta %s.", table_name)
+            return False
+
+    cfg = get_cloud_config()
+    if cfg["enabled"] and table_name in PROTECTED_ROSTER_TABLES:
+        _backup_protected_table_on_cloud(table_name, fname)
+
     # 1. Aggiorna immediatamente i file Parquet locali
     df.to_parquet(mirror_path, index=False)
     try:
@@ -637,7 +679,6 @@ def save_parquet_with_cloud_sync(table_name: str, df: pd.DataFrame, local_fallba
         df.to_parquet(local_fallback_path, index=False)
 
     # 2. Backup sul bucket remoto S3/Supabase
-    cfg = get_cloud_config()
     if cfg["enabled"]:
         return upload_file_to_cloud_object(mirror_path, fname, content_type="application/octet-stream")
     return True
@@ -789,28 +830,42 @@ def save_json_with_cloud_sync(remote_filename: str, local_path: str, data: Any) 
         return False
 
 
-def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR) -> Dict[str, Any]:
-    """Carica manualmente tutti i file locali verso il bucket remoto S3/Supabase."""
+def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR, include_protected: bool = False) -> Dict[str, Any]:
+    """Carica manualmente tutti i file locali verso il bucket remoto S3/Supabase.
+    Preferisce i file in `TMP_DATA_DIR` (dati live) rispetto a `data_dir` (baseline Git) e
+    protegge `PROTECTED_ROSTER_TABLES` da sovrascritture accidentali se `include_protected=False`.
+    """
     cfg = get_cloud_config()
     if not cfg["enabled"]:
         return {"ok": False, "reason": "Cloud storage non configurato", "uploaded": []}
 
     uploaded = []
+    skipped_protected = []
     errors = []
 
     if not os.path.exists(data_dir):
         return {"ok": False, "reason": f"Directory {data_dir} non trovata", "uploaded": []}
 
+    protected_filenames = {f"{t}.parquet" for t in PROTECTED_ROSTER_TABLES}
+
     for fname in sorted(os.listdir(data_dir)):
-        fpath = os.path.join(data_dir, fname)
+        tmp_candidate = os.path.join(TMP_DATA_DIR, fname)
+        data_candidate = os.path.join(data_dir, fname)
+        fpath = tmp_candidate if os.path.isfile(tmp_candidate) and os.path.getsize(tmp_candidate) > 0 else data_candidate
         if not os.path.isfile(fpath):
             continue
         if fname.endswith(".parquet") or fname.endswith(".json") or fname.endswith(".sqlite"):
+            if not include_protected and fname in protected_filenames:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    if download_cloud_object_to_file(fname, os.path.join(tmpdir, fname)):
+                        skipped_protected.append(fname)
+                        continue
             ctype = "application/json" if fname.endswith(".json") else "application/octet-stream"
             # Aggiorna anche tmp_data
             try:
                 os.makedirs(TMP_DATA_DIR, exist_ok=True)
-                shutil.copy2(fpath, os.path.join(TMP_DATA_DIR, fname))
+                if os.path.abspath(fpath) != os.path.abspath(tmp_candidate):
+                    shutil.copy2(fpath, tmp_candidate)
             except Exception:
                 pass
             if upload_file_to_cloud_object(fpath, fname, content_type=ctype):
@@ -827,5 +882,6 @@ def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR) -> Dict[str, Any]:
         "provider": cfg["provider"],
         "bucket": cfg["bucket_name"],
         "uploaded": uploaded,
+        "skipped_protected": skipped_protected,
         "errors": errors,
     }
