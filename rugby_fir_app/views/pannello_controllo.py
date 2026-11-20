@@ -1258,12 +1258,25 @@ def _fragment_lineup_editor(sel_date: str, detail: dict, players_df: pd.DataFram
 
 
 def _render_sub_formazioni(t: dict):
+    ov_df = utils.get_oval_matches_df()
+    ov_it_max = ""
+    if not ov_df.empty and "teamName" in ov_df.columns and "match_date" in ov_df.columns:
+        ov_it = ov_df[ov_df["teamName"].astype(str).str.lower() == "italy"]
+        if not ov_it.empty:
+            ov_it_max = str(ov_it["match_date"].astype(str).str[:10].max())
+
     c_sync1, c_sync2 = st.columns([1.6, 2.4])
     if c_sync1.button("⚡ Sincronizza Formazioni 1-23 da Dati Oval", key="btn_sync_lineups_oval", type="primary", use_container_width=True):
         n_m, n_l = utils.sync_oval_matches_and_lineups(force=True)
-        st.success(f"Sincronizzate {n_l} formazioni ufficiali (Maglie 1-23) da Dati Oval Match!")
+        msg = f"Sincronizzate {n_l} formazioni ufficiali (Maglie 1-23) da Dati Oval Match."
+        if ov_it_max:
+            msg += f" (Ultima gara Italia in Oval Match: {ov_it_max})"
+        st.success(msg)
         st.rerun()
-    c_sync2.info("📋 **Formazioni 1-23 Automatiche:** Le formazioni ufficiali (1-15 Titolari, 16-23 Finishers) sono ricavate in automatico dai dati Oval Match o clonabili con 1 click da una gara precedente.")
+    info_txt = "📋 **Formazioni 1-23 Automatiche:** Le formazioni ufficiali (1-15 Titolari, 16-23 Finishers) sono ricavate in automatico dai dati Oval Match o clonabili con 1 click da una gara precedente."
+    if ov_it_max:
+        info_txt += f" *(Ultima gara Italia in Oval Match: **{ov_it_max}**)*"
+    c_sync2.info(info_txt)
 
     lineup_summary = utils.get_lineup_matches_summary()
     players_df = utils.get_players_df()

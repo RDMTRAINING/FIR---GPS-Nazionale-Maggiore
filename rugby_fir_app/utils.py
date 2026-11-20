@@ -1189,8 +1189,16 @@ def sync_oval_matches_and_lineups(force: bool = False) -> tuple[int, int]:
 
     matches_df = get_matches_df()
     existing_dates = set(matches_df["date_str"].tolist()) if not matches_df.empty else set()
+    date_to_match_id = {}
+    if not matches_df.empty and "id" in matches_df.columns:
+        for _, mr in matches_df.iterrows():
+            d_k = str(mr.get("date_str") or "")[:10]
+            if d_k and d_k not in date_to_match_id and pd.notna(mr.get("id")):
+                date_to_match_id[d_k] = int(mr["id"])
     ldf = load_table("match_lineups")
-    existing_lineup_dates = set(ldf["date"].astype(str).str[:10].tolist()) if not ldf.empty and "date" in ldf.columns else set()
+    existing_lineup_counts = {}
+    if not ldf.empty and "date" in ldf.columns:
+        existing_lineup_counts = ldf["date"].astype(str).str[:10].value_counts().to_dict()
 
     m_synced = 0
     l_synced = 0
@@ -1221,24 +1229,32 @@ def sync_oval_matches_and_lineups(force: bool = False) -> tuple[int, int]:
         m_name = f"ITALIA - {opp.upper()}" if opp else (game_desc.upper() if game_desc else "ITALIA")
         full_lbl = f"{m_name} {comp}".strip()
 
-        # Save match if not existing or if forced
+        # Save match passing existing match_id to avoid duplicates
         if clean_date not in existing_dates or force:
-            save_match({"date": clean_date, "match_name": m_name, "competition": comp, "full_label": full_lbl, "source": "oval"})
+            save_match(
+                {"date": clean_date, "match_name": m_name, "competition": comp, "full_label": full_lbl, "source": "oval"},
+                match_id=date_to_match_id.get(clean_date),
+            )
             m_synced += 1
 
-        # Check for jersey numbers 1-23
-        valid_jerseys = g_rows[(g_rows["JERSEY"] >= 1) & (g_rows["JERSEY"] <= 23)].sort_values("JERSEY")
-        if len(valid_jerseys) >= 15:
-            if clean_date not in existing_lineup_dates or force:
-                entries = []
-                for _, jr in valid_jerseys.iterrows():
-                    j_num = int(jr["JERSEY"])
-                    p_name = str(jr.get("fir_player_name") or jr.get("playerFullName") or jr.get("player") or "").strip()
-                    pos = str(jr.get("pos") or "").strip()
-                    entries.append({"jersey_number": j_num, "player_name": p_name, "role": pos})
-                if entries:
-                    save_match_lineup(clean_date, m_name, entries)
-                    l_synced += 1
+        # Check for jersey numbers 1-23 (never downgrade an already-complete 23-player lineup)
+        j_col = "JERSEY" if "JERSEY" in g_rows.columns else ("Jersey" if "Jersey" in g_rows.columns else None)
+        if not j_col:
+            continue
+        g_tmp = g_rows.copy()
+        g_tmp["_j_num"] = pd.to_numeric(g_tmp[j_col], errors="coerce")
+        valid_jerseys = g_tmp[(g_tmp["_j_num"] >= 1) & (g_tmp["_j_num"] <= 23)].sort_values("_j_num")
+        existing_cnt = int(existing_lineup_counts.get(clean_date, 0))
+        if len(valid_jerseys) >= 15 and (existing_cnt == 0 or (force and len(valid_jerseys) >= existing_cnt)):
+            entries = []
+            for _, jr in valid_jerseys.iterrows():
+                j_num = int(jr["_j_num"])
+                p_name = str(jr.get("fir_player_name") or jr.get("playerFullName") or jr.get("player") or "").strip()
+                pos = str(jr.get("pos") or "").strip()
+                entries.append({"jersey_number": j_num, "player_name": p_name, "role": pos})
+            if entries:
+                save_match_lineup(clean_date, m_name, entries, old_date_str=clean_date)
+                l_synced += 1
 
     return m_synced, l_synced
 

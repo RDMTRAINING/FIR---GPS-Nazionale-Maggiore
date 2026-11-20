@@ -94,6 +94,7 @@ PROTECTED_ROSTER_TABLES = {
     "matches",
     "match_lineups",
     "players",
+    "oval_matches",
 }
 
 MANAGED_JSON_FILES: List[str] = [
