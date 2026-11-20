@@ -97,6 +97,15 @@ PROTECTED_ROSTER_TABLES = {
     "oval_matches",
 }
 
+PROTECTED_JSON_FILES = {
+    "player_photos.json",
+    "users.json",
+    "fir_session_types.json",
+    "session_player_status.json",
+    "session_timelines.json",
+    "app_config.json",
+}
+
 MANAGED_JSON_FILES: List[str] = [
     "fir_session_types.json",
     "session_player_status.json",
@@ -565,6 +574,9 @@ def sync_remote_to_local(force: bool = False) -> Dict[str, Any]:
     except Exception:
         pass
 
+    if cfg["enabled"]:
+        sync_remote_photos_to_local()
+
     try:
         with open(SYNC_MARKER_FILE, "w", encoding="utf-8") as f:
             f.write("synced")
@@ -805,6 +817,62 @@ def load_json_with_cloud_sync(remote_filename: str, local_path: str, default_fac
     return default_factory()
 
 
+def sync_remote_photos_to_local() -> int:
+    """Scarica eventuali foto custom caricate sul Cloud (`photos/*`) nella cartella locale `data/foto Giocatori NC NOV 26/`."""
+    cfg = get_cloud_config()
+    if not cfg["enabled"]:
+        return 0
+    downloaded_count = 0
+    dest_dir = os.path.join(DATA_DIR, "foto Giocatori NC NOV 26")
+    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        if cfg["provider"] == "supabase":
+            sb = get_supabase_client()
+            if not sb:
+                return 0
+            items = sb.storage.from_(cfg["bucket_name"]).list("photos") or []
+            for it in items:
+                nm = it.get("name") if isinstance(it, dict) else getattr(it, "name", None)
+                if not nm or nm.startswith("."):
+                    continue
+                local_p = os.path.join(dest_dir, nm)
+                if not os.path.exists(local_p) or os.path.getsize(local_p) == 0:
+                    if download_cloud_object_to_file(f"photos/{nm}", local_p):
+                        downloaded_count += 1
+        elif cfg["provider"] == "s3":
+            s3 = get_s3_client()
+            if not s3:
+                return 0
+            resp = s3.list_objects_v2(Bucket=cfg["bucket_name"], Prefix="photos/")
+            for obj in resp.get("Contents", []):
+                key = obj.get("Key", "")
+                nm = os.path.basename(key)
+                if not nm:
+                    continue
+                local_p = os.path.join(dest_dir, nm)
+                if not os.path.exists(local_p) or os.path.getsize(local_p) == 0:
+                    if download_cloud_object_to_file(key, local_p):
+                        downloaded_count += 1
+    except Exception as exc:
+        _logger.warning("Sync foto Cloud fallita: %s", exc)
+    return downloaded_count
+
+
+def _backup_protected_json_on_cloud(remote_filename: str) -> None:
+    """Salva uno snapshot della versione Cloud corrente di un JSON protetto prima di sovrascriverlo."""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prev_local = os.path.join(tmpdir, remote_filename)
+            if download_cloud_object_to_file(remote_filename, prev_local):
+                upload_file_to_cloud_object(
+                    prev_local,
+                    f"backups/{remote_filename}.prev",
+                    content_type="application/json",
+                )
+    except Exception as exc:
+        _logger.warning("Snapshot backup JSON Cloud fallito per %s: %s", remote_filename, exc)
+
+
 def save_json_with_cloud_sync(remote_filename: str, local_path: str, data: Any) -> bool:
     """
     Salva il file JSON prima sul disco locale (`/tmp_data` e `data/`)
@@ -813,6 +881,10 @@ def save_json_with_cloud_sync(remote_filename: str, local_path: str, data: Any) 
     os.makedirs(TMP_DATA_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
     mirror_path = os.path.join(TMP_DATA_DIR, remote_filename)
+
+    cfg = get_cloud_config()
+    if cfg["enabled"] and remote_filename in PROTECTED_JSON_FILES:
+        _backup_protected_json_on_cloud(remote_filename)
 
     try:
         with open(mirror_path, "w", encoding="utf-8") as f:
@@ -823,7 +895,6 @@ def save_json_with_cloud_sync(remote_filename: str, local_path: str, data: Any) 
             with open(local_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-        cfg = get_cloud_config()
         if cfg["enabled"]:
             return upload_file_to_cloud_object(mirror_path, remote_filename, content_type="application/json")
         return True
@@ -847,7 +918,7 @@ def sync_all_local_data_to_cloud(data_dir: str = DATA_DIR, include_protected: bo
     if not os.path.exists(data_dir):
         return {"ok": False, "reason": f"Directory {data_dir} non trovata", "uploaded": []}
 
-    protected_filenames = {f"{t}.parquet" for t in PROTECTED_ROSTER_TABLES}
+    protected_filenames = {f"{t}.parquet" for t in PROTECTED_ROSTER_TABLES} | PROTECTED_JSON_FILES
 
     for fname in sorted(os.listdir(data_dir)):
         tmp_candidate = os.path.join(TMP_DATA_DIR, fname)

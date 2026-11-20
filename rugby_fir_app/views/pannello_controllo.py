@@ -693,19 +693,39 @@ def _render_sub_foto_giocatori(t: dict):
         st.info("Tutte le foto sono state rimosse. Clicca su 'Salva' per applicare.")
         st.rerun()
 
-    # Sezione caricamento nuova foto
+    if b_col4.button("🔄 Aggiorna Lista File", use_container_width=True, key="btn_refresh_photo_files", help="Riscansiona la cartella foto e scarica eventuali foto custom dal Cloud"):
+        import cloud_storage
+        n_dl = cloud_storage.sync_remote_photos_to_local()
+        utils.clear_photo_cache()
+        st.session_state["player_photo_mappings"] = utils.get_player_photo_mappings()
+        st.session_state["player_photo_doubts"] = utils.get_player_photo_doubts()
+        st.toast(f"Lista foto aggiornata ({len(utils.get_all_data_image_files())} file, {n_dl} scaricati dal Cloud).")
+        st.rerun()
+
+    # Sezione caricamento nuova foto (persistita anche su Cloud Storage)
     with st.expander("📤 Carica Nuova Foto Immagine Giocatore nella cartella Data", expanded=False):
-        st.caption("Trascina qui il file immagine del giocatore (.jpg, .jpeg, .png). Verrà salvato nella cartella dati e sarà subito disponibile per l'abbinamento.")
+        st.caption("Trascina qui il file immagine del giocatore (.jpg, .jpeg, .png). Verrà salvato nella cartella dati e sul Cloud Storage, risultando subito selezionabile.")
         uploaded_img = st.file_uploader("Seleziona File Immagine", type=["jpg", "jpeg", "png", "webp", "bmp"], key="upload_photo_widget")
         if uploaded_img is not None:
-            data_folder = os.path.join(os.path.dirname(utils.__file__), "data", "foto Giocatori NC NOV 26")
-            os.makedirs(data_folder, exist_ok=True)
-            dest_file = os.path.join(data_folder, uploaded_img.name)
-            with open(dest_file, "wb") as f_up:
-                f_up.write(uploaded_img.getbuffer())
-            utils.clear_photo_cache()
-            st.success(f"File **'{uploaded_img.name}'** caricato con successo! Ora è selezionabile per qualsiasi atleta.")
-            st.rerun()
+            sig = f"{uploaded_img.name}_{uploaded_img.size}"
+            if st.session_state.get("_last_uploaded_photo_sig") != sig:
+                import cloud_storage
+                data_folder = os.path.join(os.path.dirname(utils.__file__), "data", "foto Giocatori NC NOV 26")
+                os.makedirs(data_folder, exist_ok=True)
+                dest_file = os.path.join(data_folder, uploaded_img.name)
+                with open(dest_file, "wb") as f_up:
+                    f_up.write(uploaded_img.getbuffer())
+                if cloud_storage.is_cloud_enabled():
+                    cloud_storage.upload_file_to_cloud_object(
+                        dest_file,
+                        f"photos/{uploaded_img.name}",
+                        content_type="application/octet-stream",
+                    )
+                utils.clear_photo_cache()
+                st.session_state["_last_uploaded_photo_sig"] = sig
+                st.success(f"File **'{uploaded_img.name}'** caricato e sincronizzato su Cloud! Ora è selezionabile nel menu a tendina.")
+                all_images = utils.get_all_data_image_files()
+                file_choices = [none_choice] + all_images
 
     # Controllo modifiche non salvate
     disk_mappings = utils.get_player_photo_mappings()
@@ -826,6 +846,8 @@ def _render_sub_foto_giocatori(t: dict):
                     )
 
             with c_ctl:
+                import re as _re
+                p_safe_key = _re.sub(r"[^A-Za-z0-9_]+", "_", p_name).strip("_")
                 st.markdown(f"**{p_name}**")
                 st.caption(f"{p_role} &bull; {p_club} &bull; Sigla: **{p_sigla}** ({p_dept})")
 
@@ -842,39 +864,51 @@ def _render_sub_foto_giocatori(t: dict):
                     d_cols = st.columns(len(p_doubt_files))
                     for d_idx, cand_f in enumerate(p_doubt_files):
                         short_f = os.path.basename(cand_f)
-                        if d_cols[d_idx].button(f"👉 {short_f}", key=f"btn_doubt_{i}_{d_idx}", help=f"Assegna {cand_f}"):
+                        if d_cols[d_idx].button(f"👉 {short_f}", key=f"btn_doubt_{p_safe_key}_{d_idx}", help=f"Assegna {cand_f}"):
                             st.session_state["player_photo_mappings"][p_name] = cand_f
                             if p_name in st.session_state["player_photo_doubts"]:
                                 del st.session_state["player_photo_doubts"][p_name]
-                            utils.clear_photo_cache()
+                            st.session_state[f"sel_photo_{p_safe_key}"] = cand_f if cand_f in file_choices else none_choice
+                            utils.save_player_photo_mappings(st.session_state["player_photo_mappings"], st.session_state["player_photo_doubts"])
+                            st.toast(f"✓ Foto assegnata e salvata per {p_name}")
                             st.rerun()
 
-                # Selectbox per cambiare o eliminare la foto
-                cur_idx = 0
-                if cur_assigned in file_choices:
-                    cur_idx = file_choices.index(cur_assigned)
+                # Se il percorso assegnato non esiste più (es. file rinominato), segnalalo senza cancellarlo silenziosamente
+                missing_assigned = bool(cur_assigned and cur_assigned != none_choice and cur_assigned not in file_choices)
+                if missing_assigned:
+                    st.caption(f"⚠️ File non trovato in data/: `{cur_assigned}` — seleziona il nuovo file qui sotto.")
+                    player_choices = [none_choice, cur_assigned] + all_images
+                    cur_val_for_select = cur_assigned
+                else:
+                    player_choices = file_choices
+                    cur_val_for_select = cur_assigned if cur_assigned else none_choice
+
+                cur_idx = player_choices.index(cur_val_for_select) if cur_val_for_select in player_choices else 0
 
                 sel_photo = st.selectbox(
                     "File Immagine Associato",
-                    file_choices,
+                    player_choices,
                     index=cur_idx,
-                    key=f"sel_photo_{p_name}_{i}",
+                    key=f"sel_photo_{p_safe_key}",
                     label_visibility="collapsed",
                 )
 
-                if sel_photo != (cur_assigned if cur_assigned else none_choice):
+                if sel_photo != cur_val_for_select:
                     new_val = sel_photo if sel_photo != none_choice else ""
                     st.session_state["player_photo_mappings"][p_name] = new_val
                     if p_name in st.session_state["player_photo_doubts"]:
                         del st.session_state["player_photo_doubts"][p_name]
-                    utils.clear_photo_cache()
+                    utils.save_player_photo_mappings(st.session_state["player_photo_mappings"], st.session_state["player_photo_doubts"])
+                    st.toast(f"✓ Associazione salvata per {p_name}")
                     st.rerun()
 
                 c_act1, c_act2 = st.columns([1.5, 1.5])
                 if cur_assigned:
-                    if c_act1.button("🗑️ Rimuovi (Solo Sigla)", key=f"del_photo_{p_name}_{i}", help="Rimuove la foto e lascia solo la sigla"):
+                    if c_act1.button("🗑️ Rimuovi (Solo Sigla)", key=f"del_photo_{p_safe_key}", help="Rimuove la foto e lascia solo la sigla"):
                         st.session_state["player_photo_mappings"][p_name] = ""
-                        utils.clear_photo_cache()
+                        st.session_state[f"sel_photo_{p_safe_key}"] = none_choice
+                        utils.save_player_photo_mappings(st.session_state["player_photo_mappings"], st.session_state["player_photo_doubts"])
+                        st.toast(f"✓ Foto rimossa e salvata per {p_name}")
                         st.rerun()
 
             st.markdown("</div>", unsafe_allow_html=True)
