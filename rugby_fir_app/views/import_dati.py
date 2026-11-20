@@ -1401,7 +1401,7 @@ def _render_cloud_storage_status_bar():
                 unsafe_allow_html=True,
             )
         with c_st2:
-            if st.button("🔄 Sincronizza Bucket", key="btn_force_cloud_sync", use_container_width=True):
+            if st.button("🔄 Sincronizza Bucket", key="btn_import_force_cloud_sync", use_container_width=True):
                 with st.spinner("Sincronizzazione di tutti i file Parquet, SQLite e JSON sul Cloud Bucket..."):
                     res = cloud_storage.sync_all_local_data_to_cloud()
                     utils._clear_all_table_caches()
