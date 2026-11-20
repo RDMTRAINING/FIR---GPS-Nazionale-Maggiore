@@ -84,6 +84,7 @@ MANAGED_PARQUET_TABLES: List[str] = [
     "drills_master",
     "drills_players_detail",
     "drills_roles_summary",
+    "player_weights",
 ]
 
 # Tabelle anagrafiche/convocati/formazioni critiche: mai sovrascritte da boot/bulk sync
@@ -95,6 +96,7 @@ PROTECTED_ROSTER_TABLES = {
     "match_lineups",
     "players",
     "oval_matches",
+    "player_weights",
 }
 
 PROTECTED_JSON_FILES = {

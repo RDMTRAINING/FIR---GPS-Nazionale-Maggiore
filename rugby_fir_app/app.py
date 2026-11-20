@@ -30,6 +30,7 @@ import views.dashboard_home
 import views.analisi_individuale
 import views.palestra_gymaware
 import views.analisi_drills
+import views.peso_corporeo
 import views.cambio_password
 import global_state
 import views.login
@@ -168,11 +169,12 @@ def main():
                 ("analisi_individuale", "5. 👤 Analisi individuale"),
                 ("palestra_gymaware", "6. 🏋️ Palestra & GymAware (VBT)"),
                 ("analisi_drills", "7. 🧩 Analisi & Confronto Drills"),
-                ("pannello_controllo", "8. ⚙️ Pannello di controllo FIR"),
-                ("storico_dati", "9. 🗄️ Storico dati"),
-                ("import_dati", "10. 📥 Importazione"),
-                ("cambio_password", "11. 🔑 Cambio password"),
-                ("logout", "12. 🚪 Logout"),
+                ("peso_corporeo", "8. ⚖️ Peso Corporeo"),
+                ("pannello_controllo", "9. ⚙️ Pannello di controllo FIR"),
+                ("storico_dati", "10. 🗄️ Storico dati"),
+                ("import_dati", "11. 📥 Importazione"),
+                ("cambio_password", "12. 🔑 Cambio password"),
+                ("logout", "13. 🚪 Logout"),
             ]
         else:
             # Per profili di sola visualizzazione (Viewer / Staff)
@@ -183,8 +185,9 @@ def main():
                 ("analisi_individuale", "4. 👤 Analisi individuale"),
                 ("palestra_gymaware", "5. 🏋️ Palestra & GymAware (VBT)"),
                 ("analisi_drills", "6. 🧩 Analisi & Confronto Drills"),
-                ("cambio_password", "7. 🔑 Cambio password"),
-                ("logout", "8. 🚪 Logout"),
+                ("peso_corporeo", "7. ⚖️ Peso Corporeo"),
+                ("cambio_password", "8. 🔑 Cambio password"),
+                ("logout", "9. 🚪 Logout"),
             ]
 
         for page_id, page_label in nav_items:
@@ -330,7 +333,10 @@ def main():
     # 7. Analisi & Confronto Drills
     elif page == "analisi_drills":
         views.analisi_drills.render_analisi_drills(t)
-    # 8. Pannello di controllo FIR
+    # 8. Peso Corporeo
+    elif page == "peso_corporeo":
+        views.peso_corporeo.render_peso_corporeo(t)
+    # 9. Pannello di controllo FIR
     elif page == "pannello_controllo":
         if user_role == "admin":
             views.pannello_controllo.render_pannello_controllo(t)
