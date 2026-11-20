@@ -2386,16 +2386,22 @@ def render_analisi_sessione_giornata(t: dict):
     saved_statuses = utils.get_session_player_statuses().get(sess_key, {})
     status_overrides = {**saved_statuses, **st.session_state["session_status_overrides"].get(sess_key, {})}
 
-    # Prepara i dataset necessari
+    # Prepara i dataset necessari (allineati alle opzioni visive attive sul portale)
+    hist_sort_col = st.session_state.get("hist_sort_col", "Hml_25")
+    day_chart_style = st.session_state.get("day_chart_style", "dual_ranking")
+    day_bench_src = st.session_state.get("day_bench_src", st.session_state.get("match_bench_source", "excel"))
+    week_chart_style = st.session_state.get("week_chart_style", "dual_ranking")
+    week_bench_src = st.session_state.get("week_bench_src", st.session_state.get("match_bench_source", "excel"))
+
     df_sess = _prepare_session_camp_dataframe(sub_gps_sess, camp_players, players_df, status_overrides, sum_m_per_min=False)
     role_sess, dept_sess = _compute_role_and_dept_averages(df_sess)
 
     df_day = _prepare_session_camp_dataframe(sub_gps_day, camp_players, players_df, status_overrides, sum_m_per_min=True)
-    df_day = _compute_match_pct_columns(df_day, bench_source=st.session_state.get("match_bench_source", "excel"))
+    df_day = _compute_match_pct_columns(df_day, bench_source=day_bench_src)
     role_day, dept_day = _compute_role_and_dept_averages(df_day)
 
     df_week = _prepare_session_camp_dataframe(sub_gps_week, camp_players, players_df, status_overrides, sum_m_per_min=True)
-    df_week = _compute_match_pct_columns(df_week, bench_source=st.session_state.get("match_bench_source", "excel"))
+    df_week = _compute_match_pct_columns(df_week, bench_source=week_bench_src)
     role_week, dept_week = _compute_role_and_dept_averages(df_week)
 
     fw_dept_row = dept_sess[dept_sess["department"] == "Avanti"].iloc[0].to_dict() if not dept_sess[dept_sess["department"] == "Avanti"].empty else {}
@@ -2406,8 +2412,8 @@ def render_analisi_sessione_giornata(t: dict):
         "role_df": role_sess,
         "dept_df": dept_sess,
         "fig": _build_training_attainment_chart(dept_sess, meta["archetype"]),
-        "fig_hist_fw": _build_individual_histogram_figure(df_sess, fw_dept_row, "Avanti", meta["archetype"], sort_col="Hml_25"),
-        "fig_hist_bk": _build_individual_histogram_figure(df_sess, bk_dept_row, "TreQuarti", meta["archetype"], sort_col="Hml_25"),
+        "fig_hist_fw": _build_individual_histogram_figure(df_sess, fw_dept_row, "Avanti", meta["archetype"], sort_col=hist_sort_col),
+        "fig_hist_bk": _build_individual_histogram_figure(df_sess, bk_dept_row, "TreQuarti", meta["archetype"], sort_col=hist_sort_col),
     }
     day_bundle = {
         "df": df_day,
@@ -2415,7 +2421,7 @@ def render_analisi_sessione_giornata(t: dict):
         "dept_df": dept_day,
         "date_short": meta["date_short"],
         "sessions_list": meta["day_sessions_list"],
-        "fig_match_pct": _build_match_pct_figure(df_day, chart_style="dual_ranking", is_weekly=False),
+        "fig_match_pct": _build_match_pct_figure(df_day, chart_style=day_chart_style, is_weekly=False),
     }
     week_bundle = {
         "df": df_week,
@@ -2424,7 +2430,7 @@ def render_analisi_sessione_giornata(t: dict):
         "period_str": meta["week_period_disp"],
         "competition": meta["week_competition"],
         "week_name": meta["week_name"],
-        "fig_match_pct": _build_match_pct_figure(df_week, chart_style="dual_ranking", is_weekly=True),
+        "fig_match_pct": _build_match_pct_figure(df_week, chart_style=week_chart_style, is_weekly=True),
     }
 
     from views.report_comparazione import _build_department_comparison_barchart, build_session_narrative_dict, build_fir_typologies_bundle, build_multisession_comparison_bundle
@@ -2500,7 +2506,10 @@ def render_analisi_sessione_giornata(t: dict):
         df_day, target_day_hml, target_day_hsr, target_day_tol, is_day=True, meta=meta
     )
 
-    settimana_23_bundle = build_settimana_23_bundle(hist_df, players_df, match_info, meta)
+    hist_all_df = utils.get_gps_history_df("all")
+    if hist_all_df.empty:
+        hist_all_df = hist_df
+    settimana_23_bundle = build_settimana_23_bundle(hist_all_df, players_df, match_info, meta, bench_source=week_bench_src)
 
     pdf_options_map = {
         "Pacchetto Completo Sessione & Giornata (Tutte le Pagine)": "Tutte",
@@ -2626,18 +2635,25 @@ def render_analisi_settimana(t: dict):
     saved_statuses = utils.get_session_player_statuses().get(sess_key, {})
     status_overrides = {**saved_statuses, **st.session_state["session_status_overrides"].get(sess_key, {})}
 
+    day_bench_src = st.session_state.get("day_bench_src", st.session_state.get("match_bench_source", "excel"))
+    week_chart_style = st.session_state.get("week_chart_style", "dual_ranking")
+    week_bench_src = st.session_state.get("week_bench_src", st.session_state.get("match_bench_source", "excel"))
+
     df_sess = _prepare_session_camp_dataframe(sub_gps_sess, camp_players, players_df, status_overrides, sum_m_per_min=False)
     role_sess, dept_sess = _compute_role_and_dept_averages(df_sess)
 
     df_day = _prepare_session_camp_dataframe(sub_gps_day, camp_players, players_df, status_overrides, sum_m_per_min=True)
-    df_day = _compute_match_pct_columns(df_day, bench_source=st.session_state.get("match_bench_source", "excel"))
+    df_day = _compute_match_pct_columns(df_day, bench_source=day_bench_src)
     role_day, dept_day = _compute_role_and_dept_averages(df_day)
 
     df_week = _prepare_session_camp_dataframe(sub_gps_week, camp_players, players_df, status_overrides, sum_m_per_min=True)
-    df_week = _compute_match_pct_columns(df_week, bench_source=st.session_state.get("match_bench_source", "excel"))
+    df_week = _compute_match_pct_columns(df_week, bench_source=week_bench_src)
     role_week, dept_week = _compute_role_and_dept_averages(df_week)
 
-    settimana_23_bundle = build_settimana_23_bundle(hist_df, players_df, match_info, meta)
+    hist_all_df = utils.get_gps_history_df("all")
+    if hist_all_df.empty:
+        hist_all_df = hist_df
+    settimana_23_bundle = build_settimana_23_bundle(hist_all_df, players_df, match_info, meta, bench_source=week_bench_src)
 
     week_bundle = {
         "df": df_week,
@@ -2646,7 +2662,7 @@ def render_analisi_settimana(t: dict):
         "period_str": meta["week_period_disp"],
         "competition": meta["week_competition"],
         "week_name": meta["week_name"],
-        "fig_match_pct": _build_match_pct_figure(df_week, chart_style="dual_ranking", is_weekly=True),
+        "fig_match_pct": _build_match_pct_figure(df_week, chart_style=week_chart_style, is_weekly=True),
     }
     sess_bundle = {"df": df_sess, "role_df": role_sess, "dept_df": dept_sess, "fig": None}
     day_bundle = {"df": df_day, "role_df": role_day, "dept_df": dept_day, "date_short": meta["date_short"]}

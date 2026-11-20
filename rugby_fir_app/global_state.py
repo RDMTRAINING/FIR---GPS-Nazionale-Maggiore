@@ -532,7 +532,7 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
     else:
         camp_players = pd.DataFrame()
 
-    # 1. Filtro rigoroso: solo ed esclusivamente la seduta selezionata
+    # 1. Filtro rigoroso: solo ed esclusivamente la seduta selezionata (Analisi Sessione)
     if sel_date_str and sel_sess_name:
         sub_gps_sess = hist_df[
             (hist_df["date_str"] == sel_date_str) &
@@ -541,13 +541,18 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
     else:
         sub_gps_sess = pd.DataFrame(columns=hist_df.columns)
 
-    # 2. Dati della giornata (tutte le sessioni svolte nella stessa data)
-    if sel_date_str:
-        sub_gps_day = hist_df[hist_df["date_str"] == sel_date_str].copy()
-    else:
-        sub_gps_day = pd.DataFrame(columns=hist_df.columns)
+    # Carica tutte le sorgenti (Nazionale + Benetton + Zebre) per i cumulati Giornata e Settimana
+    hist_all = utils.get_gps_history_df("all")
+    if hist_all.empty:
+        hist_all = hist_df
 
-    # 3. Dati della settimana (periodo lunedì-domenica del raduno o della sessione)
+    # 2. Dati della giornata (tutte le sessioni svolte nella stessa data, incluse Zebre/Benetton)
+    if sel_date_str:
+        sub_gps_day = hist_all[hist_all["date_str"] == sel_date_str].copy()
+    else:
+        sub_gps_day = pd.DataFrame(columns=hist_all.columns)
+
+    # 3. Dati della settimana (periodo lunedì-domenica del raduno o della sessione, incluse Zebre/Benetton)
     try:
         if selected_camp is not None and "start_date" in selected_camp:
             w_start = pd.to_datetime(str(selected_camp["start_date"])[:10])
@@ -566,9 +571,23 @@ def get_current_session_context(hist_df: pd.DataFrame = None) -> dict:
         w_end_str = sel_date_str
         period_disp = sel_date_str
 
-    sub_gps_week = hist_df[(hist_df["date_str"] >= w_start_str) & (hist_df["date_str"] <= w_end_str)].copy()
-    day_sessions_list = sorted(sub_gps_day["session_name"].dropna().unique().tolist()) if not sub_gps_day.empty else []
-    week_sessions_list = sorted(sub_gps_week["session_name"].dropna().unique().tolist()) if not sub_gps_week.empty else []
+    sub_gps_week = hist_all[(hist_all["date_str"] >= w_start_str) & (hist_all["date_str"] <= w_end_str)].copy()
+
+    def _fmt_sess_labels(df_sub: pd.DataFrame) -> list:
+        if df_sub.empty or "session_name" not in df_sub.columns:
+            return []
+        if "team_type" not in df_sub.columns:
+            return sorted(df_sub["session_name"].dropna().unique().tolist())
+        pairs = df_sub[["session_name", "team_type"]].dropna(subset=["session_name"]).drop_duplicates()
+        labels = []
+        for _, r in pairs.iterrows():
+            sn = str(r["session_name"]).strip()
+            tt = str(r["team_type"] or "nazionale").strip().lower()
+            labels.append(sn if tt == "nazionale" else f"{sn} [{tt.upper()}]")
+        return sorted(set(labels))
+
+    day_sessions_list = _fmt_sess_labels(sub_gps_day)
+    week_sessions_list = _fmt_sess_labels(sub_gps_week)
 
     try:
         date_short = pd.to_datetime(sel_date_str).strftime("%d/%m/%y") if sel_date_str else "--"
