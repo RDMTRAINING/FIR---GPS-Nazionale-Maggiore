@@ -313,7 +313,11 @@ def main():
             "nella sezione **'🔑 Cambio password'** dal menu laterale."
         )
 
-    cloud_storage.flush_cloud_certification_signals()
+    if not hasattr(cloud_storage, "flush_cloud_certification_signals"):
+        import importlib
+        importlib.reload(cloud_storage)
+    if hasattr(cloud_storage, "flush_cloud_certification_signals"):
+        cloud_storage.flush_cloud_certification_signals()
 
     # 1. Home
     if page == "dashboard_home":
