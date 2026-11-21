@@ -392,6 +392,77 @@ def download_cloud_object_to_file(remote_key: str, dest_local_path: str) -> bool
     return False
 
 
+def _record_cloud_write_signal(remote_key: str, ok: bool, cfg: Dict[str, Any], err_msg: str = "") -> None:
+    """Registra un segnale provvisorio di certificazione Cloud per ogni salvataggio/caricamento (esclusi backup interni)."""
+    if str(remote_key).startswith("backups/") or st is None:
+        return
+    try:
+        entry = {
+            "file": str(remote_key),
+            "ok": bool(ok),
+            "provider": str(cfg.get("provider") or "none").upper(),
+            "bucket": str(cfg.get("bucket_name") or DEFAULT_BUCKET_NAME),
+            "ts": time.strftime("%H:%M:%S"),
+            "err": str(err_msg or ""),
+        }
+        pending = st.session_state.get("_pending_cloud_certs", [])
+        # Evita duplicati identici nello stesso ciclo
+        if not any(p.get("file") == entry["file"] and p.get("ok") == entry["ok"] for p in pending):
+            pending.append(entry)
+        st.session_state["_pending_cloud_certs"] = pending
+        if ok:
+            st.toast(
+                f"☁️ CERTIFICATO CLOUD: '{remote_key}' salvato permanentemente su {entry['bucket']} ({entry['ts']})",
+                icon="✅",
+            )
+        else:
+            st.toast(
+                f"⚠️ ATTENZIONE CLOUD: '{remote_key}' NON salvato sul Cloud ({err_msg or 'offline'})",
+                icon="🚨",
+            )
+    except Exception:
+        pass
+
+
+def flush_cloud_certification_signals() -> None:
+    """Mostra il banner provvisorio di certificazione Cloud dopo eventuale st.rerun() e poi lo azzera."""
+    if st is None:
+        return
+    try:
+        pending = st.session_state.pop("_pending_cloud_certs", [])
+        if not pending:
+            return
+        ok_items = [p for p in pending if p.get("ok")]
+        err_items = [p for p in pending if not p.get("ok")]
+        if ok_items:
+            files_str = ", ".join(f"<code>{p['file']}</code>" for p in ok_items)
+            bucket = ok_items[-1].get("bucket", DEFAULT_BUCKET_NAME)
+            prov = ok_items[-1].get("provider", "CLOUD")
+            ts = ok_items[-1].get("ts", "")
+            st.markdown(
+                f"""
+                <div style="background:linear-gradient(90deg, #ECFDF5 0%, #D1FAE5 100%); border:1.5px solid #10B981; border-left:6px solid #059669; border-radius:10px; padding:10px 16px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; box-shadow:0 2px 8px rgba(16,185,129,0.14);">
+                    <div style="font-size:0.86rem; color:#064E3B; font-weight:700;">
+                        ☁️ <span style="text-transform:uppercase; letter-spacing:0.04em;">Certificato Permanente Cloud ({prov})</span>:
+                        {files_str} salvato su bucket <code>{bucket}</code> alle <b>{ts}</b> — i dati non andranno persi.
+                    </div>
+                    <span style="background:#059669; color:#FFFFFF; font-size:0.70rem; font-weight:800; padding:3px 9px; border-radius:999px;">SYNC OK</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.toast(
+                f"☁️ Salvato permanentemente su Cloud ({', '.join(p['file'] for p in ok_items)})",
+                icon="✅",
+            )
+        if err_items:
+            err_str = "; ".join(f"{p['file']} ({p.get('err') or 'errore'})" for p in err_items)
+            st.error(f"🚨 **ATTENZIONE — Salvataggio Cloud NON certificato:** {err_str}. Verifica la connessione o i Secrets.")
+            st.toast("⚠️ Salvataggio Cloud non riuscito!", icon="🚨")
+    except Exception:
+        pass
+
+
 def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_type: str = "application/octet-stream") -> bool:
     """Carica (sovrascrive in upsert) un file locale verso il bucket remoto S3/Supabase con retry automatico e logging."""
     global _LAST_CLOUD_ERROR
@@ -403,6 +474,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
 
     cfg = get_cloud_config()
     if not cfg["enabled"]:
+        _record_cloud_write_signal(remote_key, False, cfg, "Cloud Storage non configurato")
         return False
 
     _ensure_bucket_exists(cfg)
@@ -413,6 +485,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
             s3 = get_s3_client()
             if not s3:
                 _LAST_CLOUD_ERROR = "Client S3 non inizializzato"
+                _record_cloud_write_signal(remote_key, False, cfg, _LAST_CLOUD_ERROR)
                 return False
             try:
                 s3.upload_file(
@@ -421,6 +494,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
                     remote_key,
                     ExtraArgs={"ContentType": content_type},
                 )
+                _record_cloud_write_signal(remote_key, True, cfg)
                 return True
             except Exception as exc:
                 _LAST_CLOUD_ERROR = f"Errore upload S3 ({remote_key}): {exc}"
@@ -430,6 +504,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
             sb = get_supabase_client()
             if not sb:
                 _LAST_CLOUD_ERROR = "Client Supabase non inizializzato"
+                _record_cloud_write_signal(remote_key, False, cfg, _LAST_CLOUD_ERROR)
                 return False
             try:
                 with open(local_src_path, "rb") as f:
@@ -439,6 +514,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
                     file=data_bytes,
                     file_options={"content-type": content_type, "upsert": "true"},
                 )
+                _record_cloud_write_signal(remote_key, True, cfg)
                 return True
             except Exception as exc:
                 _LAST_CLOUD_ERROR = f"Errore upload Supabase ({remote_key}): {exc}"
@@ -449,6 +525,7 @@ def upload_file_to_cloud_object(local_src_path: str, remote_key: str, content_ty
         if attempt == 0:
             time.sleep(0.6)
 
+    _record_cloud_write_signal(remote_key, False, cfg, _LAST_CLOUD_ERROR)
     return False
 
 

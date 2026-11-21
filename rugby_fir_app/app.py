@@ -294,6 +294,7 @@ def main():
         "analisi_individuale",
         "palestra_gymaware",
         "analisi_drills",
+        "peso_corporeo",
         "cambio_password",
     )
     if user_role != "admin" and page not in allowed_viewer_pages:
@@ -311,6 +312,8 @@ def main():
             "Per motivi di sicurezza, ti invitiamo a impostare subito una password personale definitiva "
             "nella sezione **'🔑 Cambio password'** dal menu laterale."
         )
+
+    cloud_storage.flush_cloud_certification_signals()
 
     # 1. Home
     if page == "dashboard_home":
